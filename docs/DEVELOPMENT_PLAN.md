@@ -337,8 +337,17 @@ Storage) Daemon) Schema) Logic)  Layer)
 
 - [ ] Define models in `schemas/views.py`:
   ```python
+  class UserStyleItem(BaseModel):
+      key: str
+      summary: str
+      tags: list[str]
+      importance: float
+      last_updated_at: datetime
+      source_memory_ids: list[str]
+
   class UserStyleView(BaseModel):
       type: Literal["user_style_view"]
+      mode: Literal["core", "full"]
       project_id: str
       user_id: str
       generated_at: datetime
@@ -348,6 +357,7 @@ Storage) Daemon) Schema) Logic)  Layer)
 
   class ProjectBriefView(BaseModel):
       type: Literal["project_brief_view"]
+      mode: Literal["core", "full"]
       project_id: str
       generated_at: datetime
       token_estimate: int
@@ -356,7 +366,32 @@ Storage) Daemon) Schema) Logic)  Layer)
       markdown: str
 
   class PitfallsView(BaseModel):
-      ...
+      type: Literal["pitfalls_view"]
+      project_id: str
+      generated_at: datetime
+      token_estimate: int
+      has_relevant_pitfalls: bool
+      items: list[PitfallItem]
+      markdown: str
+
+  class SelectedMemory(BaseModel):
+      memory_id: str
+      type: str
+      key: str
+      content: str
+      importance: float
+      reason: str  # why this memory is relevant to the task
+
+  class TaskContext(BaseModel):
+      type: Literal["task_context"]
+      project_id: str
+      user_id: str
+      task_description: str
+      generated_at: datetime
+      token_estimate: int
+      has_relevant_memory: bool
+      selected_memories: list[SelectedMemory]
+      markdown: str
 
   class SearchResult(BaseModel):
       memory_id: str
@@ -365,6 +400,10 @@ Storage) Daemon) Schema) Logic)  Layer)
       content: str
       tags: list[str]
       importance: float
+      recency_days: int
+      score: float
+      reason: str  # explanation of relevance
+      source: SearchSource  # {episode_ids, file_paths}
   ```
 
 - [ ] Define request/response models in `schemas/api.py`:
@@ -394,22 +433,47 @@ Storage) Daemon) Schema) Logic)  Layer)
       return ProcessEventsResponse(episode_ids=[], memory_item_ids=[])
 
   @app.get("/views/user_style")
-  async def get_user_style_view(project_id: str, user_id: str = None) -> UserStyleView:
+  async def get_user_style_view(
+      project_id: str,
+      user_id: str = None,
+      mode: str = "core",
+      context_budget_tokens: int = 256
+  ) -> UserStyleView:
       # Stub: return dummy view
       ...
 
   @app.get("/views/project_brief")
-  async def get_project_brief_view(project_id: str) -> ProjectBriefView:
+  async def get_project_brief_view(
+      project_id: str,
+      mode: str = "core",
+      context_budget_tokens: int = 256
+  ) -> ProjectBriefView:
       # Stub
       ...
 
   @app.get("/views/pitfalls")
-  async def get_pitfalls_view(project_id: str, scope_paths: list[str] = None) -> PitfallsView:
+  async def get_pitfalls_view(
+      project_id: str,
+      scope_paths: list[str] = None,
+      task_description: str = None,
+      context_budget_tokens: int = 256
+  ) -> PitfallsView:
       # Stub
       ...
 
+  @app.post("/task_context")
+  async def get_task_context(request: TaskContextRequest) -> TaskContext:
+      # Stub: primary output tool
+      ...
+
   @app.get("/search_memory")
-  async def search_memory(project_id: str, query: str, top_k: int = 5) -> list[SearchResult]:
+  async def search_memory(
+      project_id: str,
+      query: str,
+      top_k: int = 5,
+      types: list[str] = None,
+      scope_paths: list[str] = None
+  ) -> SearchResponse:
       # Stub
       ...
   ```
@@ -522,30 +586,104 @@ Storage) Daemon) Schema) Logic)  Layer)
 
 - [ ] Implement `views/user_style.py`:
   ```python
-  async def build_user_style_view(project_id: str, user_id: str = None) -> UserStyleView:
+  async def build_user_style_view(
+      project_id: str,
+      user_id: str = None,
+      mode: str = "core",
+      context_budget_tokens: int = 256
+  ) -> UserStyleView:
       # 1. Check staleness via view_meta
-      # 2. If fresh, return cached
+      # 2. If fresh and fits budget, return cached
       # 3. If stale:
       #    - Query project memory_items (type='user_style')
       #    - Query global user_style_items
       #    - Merge (project overrides global)
+      #    - Select top N based on mode and budget
       #    - Call LLM to generate view
       #    - Cache and update view_meta
-      # 4. Return view
+      # 4. Return view with token_estimate
   ```
 
 - [ ] Implement `views/project_brief.py`:
   ```python
-  async def build_project_brief_view(project_id: str) -> ProjectBriefView:
+  async def build_project_brief_view(
+      project_id: str,
+      mode: str = "core",
+      context_budget_tokens: int = 256
+  ) -> ProjectBriefView:
       # Similar pattern, query type='project_fact'
+      # Respect context_budget_tokens
       ...
   ```
 
 - [ ] Implement `views/pitfalls.py`:
   ```python
-  async def build_pitfalls_view(project_id: str, scope_paths: list[str] = None) -> PitfallsView:
+  async def build_pitfalls_view(
+      project_id: str,
+      scope_paths: list[str] = None,
+      task_description: str = None,
+      context_budget_tokens: int = 256
+  ) -> PitfallsView:
       # Query type='pitfall', filter by scope_paths
+      # Return has_relevant_pitfalls=False if nothing relevant
       ...
+  ```
+
+### D5. Task Context (Primary Output) (`views/task_context.py`)
+
+- [ ] Implement candidate retrieval:
+  ```python
+  async def retrieve_candidates(
+      project_id: str,
+      task_description: str,
+      active_file_paths: list[str],
+      preferred_types: list[str],
+      limit: int = 20
+  ) -> list[MemoryItem]:
+      # 1. Embed task_description
+      # 2. Filter memory_items by project, types, file overlap
+      # 3. Score: 0.6*similarity + 0.2*importance + 0.1*recency + 0.1*path_match
+      # 4. Return top candidates
+  ```
+
+- [ ] Implement task-aware summarization:
+  ```python
+  async def build_task_context(request: TaskContextRequest) -> TaskContext:
+      # 1. Retrieve candidates
+      # 2. If all scores below threshold:
+      #    - Return has_relevant_memory=False, empty selected_memories
+      # 3. Call LLM with Chain-of-Note prompt:
+      #    - Decide which memories are relevant
+      #    - Generate reason for each
+      #    - Produce markdown bounded by context_budget_tokens
+      # 4. Return TaskContext with token_estimate
+  ```
+
+- [ ] Implement abstention handling:
+  ```python
+  def build_empty_context(project_id: str, task: str) -> TaskContext:
+      return TaskContext(
+          has_relevant_memory=False,
+          selected_memories=[],
+          markdown="No relevant long-term memory found for this task."
+      )
+  ```
+
+### D6. Enhanced Search (`views/search.py`)
+
+- [ ] Implement explanatory search:
+  ```python
+  async def search_memory(
+      project_id: str,
+      query: str,
+      top_k: int = 5,
+      types: list[str] = None,
+      scope_paths: list[str] = None
+  ) -> SearchResponse:
+      # 1. Filter and score memory_items
+      # 2. For each result, generate reason via LLM or template
+      # 3. Include source (episode_ids, file_paths)
+      # 4. Return with score and recency_days
   ```
 
 - [ ] Implement view prompts in `prompts/views.py`:
@@ -553,8 +691,27 @@ Storage) Daemon) Schema) Logic)  Layer)
   USER_STYLE_VIEW_PROMPT = """
   Generate a concise coding style guide from these memory items:
   {items}
+  Budget: {context_budget_tokens} tokens max.
 
   Output JSON: {items: [...], markdown: "..."}
+  """
+
+  TASK_CONTEXT_PROMPT = """
+  You are building a memory pack for a coding assistant.
+
+  Task: {task_description}
+  Active files: {active_file_paths}
+
+  Candidate memories:
+  {candidates}
+
+  Instructions:
+  - Decide which memories are truly relevant for this task
+  - For each selected memory, explain briefly why it matters
+  - Produce a concise markdown summary (max {context_budget_tokens} tokens)
+  - If nothing is relevant, return selected_memories as empty
+
+  Output JSON: {selected_memories: [...], markdown: "..."}
   """
   ```
 
@@ -573,10 +730,27 @@ Storage) Daemon) Schema) Logic)  Layer)
   }
   ```
 
-- [ ] Implement tool definitions:
+- [ ] Implement tool definitions (5 tools):
   ```rust
   fn get_tool_definitions() -> Vec<ToolDefinition> {
       vec![
+          // Primary tool: task-aware context
+          ToolDefinition {
+              name: "get_task_context",
+              description: "Get task-aware memory context with relevance explanations",
+              input_schema: json!({
+                  "type": "object",
+                  "properties": {
+                      "project_root": {"type": "string"},
+                      "user_id": {"type": "string"},
+                      "task_description": {"type": "string"},
+                      "active_file_paths": {"type": "array", "items": {"type": "string"}},
+                      "context_budget_tokens": {"type": "integer", "default": 400},
+                      "preferred_memory_types": {"type": "array", "items": {"type": "string"}}
+                  },
+                  "required": ["project_root", "task_description"]
+              }),
+          },
           ToolDefinition {
               name: "get_user_style_view",
               description: "Get user coding style preferences",
@@ -584,12 +758,55 @@ Storage) Daemon) Schema) Logic)  Layer)
                   "type": "object",
                   "properties": {
                       "project_root": {"type": "string"},
-                      "user_id": {"type": "string"}
+                      "user_id": {"type": "string"},
+                      "mode": {"type": "string", "enum": ["core", "full"], "default": "core"},
+                      "context_budget_tokens": {"type": "integer", "default": 256}
                   },
                   "required": ["project_root"]
               }),
           },
-          // ... other tools
+          ToolDefinition {
+              name: "get_project_brief_view",
+              description: "Get project overview and key facts",
+              input_schema: json!({
+                  "type": "object",
+                  "properties": {
+                      "project_root": {"type": "string"},
+                      "mode": {"type": "string", "enum": ["core", "full"], "default": "core"},
+                      "context_budget_tokens": {"type": "integer", "default": 256}
+                  },
+                  "required": ["project_root"]
+              }),
+          },
+          ToolDefinition {
+              name: "get_pitfalls_view",
+              description: "Get known pitfalls for specific scope",
+              input_schema: json!({
+                  "type": "object",
+                  "properties": {
+                      "project_root": {"type": "string"},
+                      "scope_paths": {"type": "array", "items": {"type": "string"}},
+                      "task_description": {"type": "string"},
+                      "context_budget_tokens": {"type": "integer", "default": 256}
+                  },
+                  "required": ["project_root"]
+              }),
+          },
+          ToolDefinition {
+              name: "search_project_memory",
+              description: "Search project memory with explanatory results",
+              input_schema: json!({
+                  "type": "object",
+                  "properties": {
+                      "project_root": {"type": "string"},
+                      "query": {"type": "string"},
+                      "top_k": {"type": "integer", "default": 5},
+                      "types": {"type": "array", "items": {"type": "string"}},
+                      "scope_paths": {"type": "array", "items": {"type": "string"}}
+                  },
+                  "required": ["project_root", "query"]
+              }),
+          },
       ]
   }
   ```
@@ -598,9 +815,16 @@ Storage) Daemon) Schema) Logic)  Layer)
   ```rust
   async fn handle_tool_call(name: &str, args: Value) -> Result<Value> {
       match name {
+          "get_task_context" => {
+              let req = TaskContextRequest::from_value(&args)?;
+              let ctx = daemon_client.get_task_context(req).await?;
+              Ok(serde_json::to_value(ctx)?)
+          }
           "get_user_style_view" => {
               let project = args["project_root"].as_str()?;
-              let view = daemon_client.get_user_style_view(project).await?;
+              let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("core");
+              let budget = args.get("context_budget_tokens").and_then(|v| v.as_i64()).unwrap_or(256);
+              let view = daemon_client.get_user_style_view(project, mode, budget).await?;
               Ok(serde_json::to_value(view)?)
           }
           // ... other tools
@@ -636,6 +860,19 @@ Storage) Daemon) Schema) Logic)  Layer)
   - Backup existing
   - Add `ctx-memory` server entry
   - Confirm with user
+
+### E3. Update Rust HTTP client for new endpoints
+
+- [ ] Add `get_task_context()` method:
+  ```rust
+  async fn get_task_context(&self, req: TaskContextRequest) -> Result<TaskContext>
+  ```
+
+- [ ] Update existing methods with mode and budget params:
+  ```rust
+  async fn get_user_style_view(&self, project_id: &str, mode: &str, budget: i64) -> Result<UserStyleView>
+  async fn get_project_brief_view(&self, project_id: &str, mode: &str, budget: i64) -> Result<ProjectBriefView>
+  ```
 
 ---
 
@@ -737,10 +974,10 @@ Storage) Daemon) Schema) Logic)  Layer)
 | Week | Track A | Track B | Track C | Track D | Track E |
 |------|---------|---------|---------|---------|---------|
 | 0 | Scaffold | Scaffold | Scaffold | - | - |
-| 1 | Storage, Events, Config, CLI | Daemon start | Schemas, Server stub | - | - |
+| 1 | Storage, Events, Config, CLI | Daemon start | Schemas (incl. TaskContext), Server stub | - | - |
 | 2 | - | Watcher, HTTP client, Batch loop | Storage adapter | Grouping, Extraction | - |
-| 3 | - | Integration | - | Update, Views | MCP layer |
-| 4+ | - | Hardening | - | Prompt iteration | Integration |
+| 3 | - | Integration | - | Update, Views, Task Context, Search | MCP layer (5 tools) |
+| 4+ | - | Hardening | - | Prompt iteration, Abstention tuning | Integration |
 
 ---
 

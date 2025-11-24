@@ -55,18 +55,34 @@ Package: `squirrel_memory`
 - HTTP server on `localhost:<port>` (port recorded in `~/.sqrl/memory-service.json`)
 
 **Endpoints:**
-- `POST /process_events`
-- `GET /views/user_style`
-- `GET /views/project_brief`
-- `GET /views/pitfalls`
-- `GET /search_memory`
+- `POST /process_events` – ingest and process event batches
+- `GET /views/user_style` – user coding style summary
+- `GET /views/project_brief` – project overview
+- `GET /views/pitfalls` – known pitfalls for scope
+- `POST /task_context` – task-aware memory retrieval (primary output tool)
+- `GET /search_memory` – semantic memory search
 
 **Responsibilities:**
 - Group raw events into episodes
 - Extract structured `MemoryItems` from episodes (user_style, project_fact, pitfalls, recipes...)
 - Apply Mem0-style update logic (ADD/UPDATE/NOOP/DELETE) to keep memory clean and up-to-date
 - Generate compact views for LLM consumption
+- Provide task-aware context with relevance explanations
 - Perform memory search / RAG for deeper queries
+
+---
+
+## 1.3 Input vs Output Responsibilities
+
+**Input / capture / storage:**
+- Done entirely by Rust daemon + watchers + Python memory service
+- Watch logs → create Events → batch to `/process_events` → build episodes and memory_items
+- MCP is not involved in input
+
+**Output / access from models:**
+- Done via MCP tools that expose high-level "memory views" and search
+- Models never see raw logs or raw events; they only see structured outputs
+- From MCP's perspective, Squirrel is a set of read-only memory tools
 
 ---
 
@@ -353,12 +369,20 @@ Each tool:
 
 ### 5.2 `GET /views/user_style`
 
-**Query params:** `project_id`, `user_id` (optional)
+**Query params:**
+- `project_id` (required)
+- `user_id` (optional)
+- `mode` (optional): `"core"` | `"full"` (default: `"core"`)
+- `context_budget_tokens` (optional): max tokens for output (default: 256)
+
+**Mode behavior:**
+- `mode = "core"`: Return compact view (3-5 top items), good for session startup
+- `mode = "full"`: Return richer view, for bigger decisions/refactors
 
 **Algorithm:**
 1. Read `view_meta WHERE view_name='user_style'`
 2. Count total events for project
-3. If not stale:
+3. If not stale and cached view fits budget:
    - Return cached JSON from `views/user_style.json`
 4. If stale:
    - Query `memory_items` where:
@@ -367,9 +391,9 @@ Each tool:
      - `scope IN ('user','project')`
    - Query global `user_style_items` from `~/.sqrl/user.db`
    - Merge project-specific + global styles (project overrides refine global)
-   - Sort by importance & recency; keep top N (e.g. 20)
+   - Sort by importance & recency; keep top N based on mode and budget
    - Call LLM with a view prompt to generate:
-     - `items`: normalized `{key, summary, tags, importance}`
+     - `items`: normalized `{key, summary, tags, importance, last_updated_at, source_memory_ids}`
      - `markdown`: short, well-structured summary
    - Write JSON to `views/user_style.json`
    - Update `view_meta` with new timestamp, `events_count_at_gen`
@@ -382,16 +406,19 @@ Each tool:
 ```json
 {
   "type": "user_style_view",
+  "mode": "core",
   "project_id": "/abs/path",
   "user_id": "alice",
   "generated_at": "2025-11-25T10:20:00Z",
-  "token_estimate": 180,
+  "token_estimate": 160,
   "items": [
     {
       "key": "async_preference",
       "summary": "Prefers async/await for all I/O-bound handlers.",
       "tags": ["python", "async"],
-      "importance": 0.9
+      "importance": 0.9,
+      "last_updated_at": "2025-11-24T15:30:00Z",
+      "source_memory_ids": ["mem_123", "mem_789"]
     }
   ],
   "markdown": "## User Coding Style\n\n- Always use async/await..."
@@ -400,20 +427,24 @@ Each tool:
 
 ### 5.3 `GET /views/project_brief`
 
-**Similar pattern:**
+**Query params:**
+- `project_id` (required)
+- `mode` (optional): `"core"` | `"full"` (default: `"core"`)
+- `context_budget_tokens` (optional): max tokens for output (default: 256)
 
-- Inputs: `project_id`
-- Stale rules:
-  - `ttl_seconds = 600` (10 min)
-  - or events_count delta >= 100
-- Data sources:
-  - `memory_items` with `type='project_fact'`
-  - Optionally: some episodes for context
+**Stale rules:**
+- `ttl_seconds = 600` (10 min)
+- or events_count delta >= 100
+
+**Data sources:**
+- `memory_items` with `type='project_fact'`
+- Optionally: some episodes for context
 
 **Output:** `ProjectBriefView` JSON:
 ```json
 {
   "type": "project_brief_view",
+  "mode": "core",
   "project_id": "/abs/path",
   "generated_at": "...",
   "token_estimate": 200,
@@ -435,10 +466,11 @@ Each tool:
 
 ### 5.4 `GET /views/pitfalls`
 
-**Inputs:**
-- `project_id`
-- optional `scope_paths[]`
-- optional `task_description`
+**Query params:**
+- `project_id` (required)
+- `scope_paths[]` (optional): filter to specific files/modules
+- `task_description` (optional): for relevance scoring
+- `context_budget_tokens` (optional): max tokens for output (default: 256)
 
 **Stale rules:**
 - `ttl_seconds = 600`
@@ -447,16 +479,131 @@ Each tool:
 **Data:**
 - `memory_items` with `type='pitfall'` and tags/file_paths intersecting `scope_paths`
 
-**Output:** `PitfallsView` JSON with `items[]` + `markdown`.
+**Output:** `PitfallsView` JSON:
+```json
+{
+  "type": "pitfalls_view",
+  "project_id": "/abs/path",
+  "generated_at": "...",
+  "token_estimate": 150,
+  "has_relevant_pitfalls": true,
+  "items": [
+    {
+      "key": "auth_token_expiry",
+      "content": "JWT tokens expire after 1 hour; refresh logic needed",
+      "tags": ["auth", "jwt"],
+      "importance": 0.8,
+      "file_paths": ["src/auth.py"]
+    }
+  ],
+  "markdown": "## Known Pitfalls\n\n- JWT tokens expire after 1 hour..."
+}
+```
 
-### 5.5 `GET /search_memory`
+### 5.5 `POST /task_context` (Primary Output Tool)
 
-**Inputs:**
-- `project_id`
-- `query` (string)
-- optional `top_k` (default 5)
-- optional `types[]` (filter by memory type)
-- optional `scope_paths[]` (to bias scoring)
+This is the main task-aware memory retrieval endpoint. Given a specific coding task, returns only the most relevant, budget-bounded, explained memory.
+
+**Request body:**
+```json
+{
+  "project_id": "/abs/path/to/repo",
+  "user_id": "alice",
+  "task_description": "Add a delete endpoint for inventory items",
+  "active_file_paths": ["src/routes/inventory.py", "tests/test_inventory.py"],
+  "context_budget_tokens": 400,
+  "preferred_memory_types": ["user_style", "project_fact", "pitfall"]
+}
+```
+
+**Processing pipeline:**
+
+1. **Candidate retrieval (RAG++)**
+   - Embed `task_description`
+   - Filter `memory_items` by:
+     - `project_id`
+     - `type` in `preferred_memory_types`
+     - `file_paths` overlap with `active_file_paths` (if available)
+   - Score candidates:
+     ```
+     score = 0.6 * similarity(query_emb, item_emb)
+           + 0.2 * importance
+           + 0.1 * recency
+           + 0.1 * path_match_score
+     ```
+   - Take top ~20 candidates as raw candidates
+
+2. **Task-aware summarization (Chain-of-Note style)**
+   - Build context with task_description and candidate_memories
+   - Call LLM with prompt:
+     ```
+     You are building a memory pack for a coding assistant.
+     Given the task and these candidate memories:
+     - Decide which memories are truly relevant for this task.
+     - For each selected memory, explain briefly why it matters.
+     - Produce a concise markdown summary bounded by context_budget_tokens.
+     - If nothing is relevant, return selected_memories as empty.
+     ```
+
+3. **Token budget awareness**
+   - Enforce `context_budget_tokens` in LLM prompt
+   - Post-truncate markdown if needed
+   - Compute and return `token_estimate`
+
+**Abstention handling:**
+- If all candidates have low scores (below threshold):
+  - Return `selected_memories: []`
+  - Set `has_relevant_memory: false`
+  - `markdown`: "No relevant long-term memory found for this task."
+
+**Return type:** `TaskContext` JSON:
+```json
+{
+  "type": "task_context",
+  "project_id": "/abs/path",
+  "user_id": "alice",
+  "task_description": "Add a delete endpoint for inventory items",
+  "generated_at": "2025-11-25T10:21:00Z",
+  "token_estimate": 320,
+  "has_relevant_memory": true,
+  "selected_memories": [
+    {
+      "memory_id": "mem_123",
+      "type": "user_style",
+      "key": "async_preference",
+      "content": "Prefers async/await for I/O-bound handlers.",
+      "importance": 0.9,
+      "reason": "This is an HTTP endpoint; user prefers async implementations."
+    },
+    {
+      "memory_id": "mem_456",
+      "type": "user_style",
+      "key": "testing_framework",
+      "content": "Uses pytest with fixtures for test setup.",
+      "importance": 0.8,
+      "reason": "The task will need tests; user uses pytest fixtures."
+    },
+    {
+      "memory_id": "mem_789",
+      "type": "project_fact",
+      "key": "framework",
+      "content": "Project uses FastAPI with async SQLAlchemy.",
+      "importance": 0.9,
+      "reason": "Delete endpoint should follow FastAPI patterns."
+    }
+  ],
+  "markdown": "## Relevant memory for this task\n\n- Use async/await for the delete endpoint.\n- Add pytest tests using fixtures for setup.\n- Project uses FastAPI and async SQLAlchemy."
+}
+```
+
+### 5.6 `GET /search_memory`
+
+**Query params:**
+- `project_id` (required)
+- `query` (required): search string
+- `top_k` (optional): default 5
+- `types[]` (optional): filter by memory type
+- `scope_paths[]` (optional): to bias scoring
 
 **Behavior:**
 1. Filter `memory_items` by project + types
@@ -466,18 +613,27 @@ Each tool:
    - Else:
      - fallback to simple keyword / BM25 style scoring + importance + recency
 3. Optionally run a small reranker LLM over top-K candidates
+4. For each result, generate a `reason` explaining relevance
 
-**Return:**
+**Return type:** `SearchResponse` JSON:
 ```json
 {
+  "query": "JWT login tests",
   "results": [
     {
       "memory_id": "mem_123",
       "type": "project_fact",
       "key": "auth_mechanism",
       "content": "Auth uses JWT tokens via /login endpoint.",
-      "tags": ["auth","jwt","endpoint"],
-      "importance": 0.9
+      "tags": ["auth", "jwt", "endpoint"],
+      "importance": 0.9,
+      "recency_days": 5,
+      "score": 0.87,
+      "reason": "Mentions JWT and /login, directly related to query.",
+      "source": {
+        "episode_ids": ["ep_42"],
+        "file_paths": ["src/auth.py"]
+      }
     }
   ]
 }
@@ -489,25 +645,52 @@ Each tool:
 
 We target the latest MCP spec (mid-2025) with structured tool outputs.
 
-Squirrel's MCP server (`sqrl mcp`) exposes 4 tools:
+Squirrel's MCP server (`sqrl mcp`) exposes 5 tools:
+
+### `get_task_context` (Primary Tool)
+
+The main tool for task-aware memory retrieval. Returns only relevant, explained memory for a specific task.
+
+**Input:**
+```json
+{
+  "project_root": "/abs/path/to/repo",
+  "user_id": "alice",
+  "task_description": "Add a delete endpoint for inventory items",
+  "active_file_paths": ["src/routes/inventory.py"],
+  "context_budget_tokens": 400,
+  "preferred_memory_types": ["user_style", "project_fact", "pitfall"]
+}
+```
+
+**Output:** JSON `TaskContext` with `selected_memories[]`, `reason` per item, and `markdown`
 
 ### `get_user_style_view`
 
 **Input:**
 ```json
-{ "project_root": "/abs/path/to/repo", "user_id": "alice" }
+{
+  "project_root": "/abs/path/to/repo",
+  "user_id": "alice",
+  "mode": "core",
+  "context_budget_tokens": 256
+}
 ```
 
-**Output:** JSON matching `UserStyleView` schema
+**Output:** JSON `UserStyleView` with items and markdown
 
 ### `get_project_brief_view`
 
 **Input:**
 ```json
-{ "project_root": "/abs/path/to/repo" }
+{
+  "project_root": "/abs/path/to/repo",
+  "mode": "core",
+  "context_budget_tokens": 256
+}
 ```
 
-**Output:** JSON `ProjectBriefView`
+**Output:** JSON `ProjectBriefView` with modules, key_facts, and markdown
 
 ### `get_pitfalls_view`
 
@@ -516,11 +699,12 @@ Squirrel's MCP server (`sqrl mcp`) exposes 4 tools:
 {
   "project_root": "/abs/path/to/repo",
   "scope_paths": ["src/auth.py"],
-  "task_description": "Refactor auth flow"
+  "task_description": "Refactor auth flow",
+  "context_budget_tokens": 256
 }
 ```
 
-**Output:** JSON `PitfallsView`
+**Output:** JSON `PitfallsView` with items and markdown
 
 ### `search_project_memory`
 
@@ -530,34 +714,76 @@ Squirrel's MCP server (`sqrl mcp`) exposes 4 tools:
   "project_root": "/abs/path/to/repo",
   "query": "JWT login tests",
   "top_k": 5,
-  "types": ["project_fact","pitfall"],
+  "types": ["project_fact", "pitfall"],
   "scope_paths": ["src/auth.py"]
 }
 ```
 
-**Output:**
-```json
-{
-  "results": [
-    {
-      "memory_id": "mem_123",
-      "type": "project_fact",
-      "key": "auth_mechanism",
-      "content": "Auth uses JWT tokens via /login endpoint.",
-      "tags": ["auth","jwt","endpoint"],
-      "importance": 0.9
-    }
-  ]
-}
-```
+**Output:** JSON `SearchResponse` with `results[]`, each including `score`, `reason`, and `source`
 
 ---
 
-## Design Notes
+## 7. Recommended Host Call Patterns
 
+Squirrel does NOT decide when to call MCP tools. Each host (Claude Code, Codex CLI, Cursor, Gemini CLI) decides when to call which tool.
+
+**Recommended policy for hosts:**
+
+### On new session in a repo:
+```
+Call:
+- get_user_style_view(mode="core", context_budget_tokens=256)
+- get_project_brief_view(mode="core", context_budget_tokens=256)
+```
+
+### On specific coding task:
+```
+Call:
+- get_task_context(task_description=..., active_file_paths=..., context_budget_tokens=400)
+```
+
+### On risky / cross-cutting tasks (e.g., refactor auth, migrate DB):
+```
+Call:
+- get_pitfalls_view(scope_paths=[...], context_budget_tokens=256)
+- get_task_context(task_description=..., context_budget_tokens=400)
+```
+
+### When needing deep recall:
+```
+Call:
+- search_project_memory(query=..., top_k=5)
+```
+
+### Context budget adaptation:
+Because every tool accepts `context_budget_tokens`, hosts can adapt to their own model's context size:
+- Small models (8-16k): pass smaller budgets (150-256)
+- Large models (200k+): pass bigger budgets (400-800)
+
+Squirrel honors the budget without hardcoding any model assumptions.
+
+---
+
+## 8. Design Notes
+
+### MCP Layer Philosophy
 The MCP layer is deliberately thin:
 - It doesn't do memory logic
 - It just:
   1. Maps tool args → internal request
   2. Calls daemon over local TCP
   3. Returns the JSON view or search results
+
+### Abstention Behavior
+To avoid polluting the model's context with irrelevant memory:
+- All output endpoints can return `has_relevant_memory: false` (or equivalent)
+- `selected_memories: []` when nothing is relevant
+- `markdown` clearly states "No relevant memory found"
+- Hosts can then decide to ignore the tool output
+
+### Token Budget Semantics
+- `context_budget_tokens` is a soft limit on output size
+- Used to limit number of items and markdown length
+- LLM prompts are instructed to respect the budget
+- Post-processing can truncate if needed
+- `token_estimate` in response helps hosts verify budget compliance
