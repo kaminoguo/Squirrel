@@ -25,44 +25,162 @@ You code with Claude Code / Codex / Cursor / Gemini CLI
 ┌─────────────────────────────────────────────────────────────────┐
 │                        RUST DAEMON                              │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐│
-│  │Log Watch │  │ SQLite   │  │MCP Server│  │      CLI         ││
-│  │(4 CLIs)  │  │sqlite-vec│  │(2 tools) │  │sqrl init/status  ││
+│  │Log Watch │  │ SQLite   │  │MCP Server│  │   CLI (thin)     ││
+│  │(4 CLIs)  │  │sqlite-vec│  │          │  │ passes to agent  ││
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └──────────────────┘│
 │       └─────────────┴─────────────┴─────────────────────────────│
 │                            ↕ Unix socket IPC                    │
 └─────────────────────────────────────────────────────────────────┘
                              ↕
 ┌─────────────────────────────────────────────────────────────────┐
-│                      PYTHON MEMORY SERVICE                      │
+│                      PYTHON AGENT                               │
 │  ┌───────────────────────────────────────────────────────────┐ │
-│  │              Router Agent (Dual Mode)                      │ │
-│  │  ┌─────────────────────┐  ┌─────────────────────────────┐ │ │
-│  │  │   INGEST Mode       │  │      ROUTE Mode             │ │ │
-│  │  │ Episode → LLM:      │  │ task → relevant memories    │ │ │
-│  │  │  1. Segment tasks   │  │ + "why" explanations        │ │ │
-│  │  │  2. SUCCESS/FAILURE │  │                             │ │ │
-│  │  │  3. Extract memories│  │                             │ │ │
-│  │  └─────────────────────┘  └─────────────────────────────┘ │ │
+│  │              Squirrel Agent (single LLM brain)            │ │
+│  │                                                           │ │
+│  │  Tools:                                                   │ │
+│  │  ├── Memory: ingest, search, get_context, forget          │ │
+│  │  ├── Filesystem: find_cli_configs, read/write_file        │ │
+│  │  ├── Config: init_project, get/set_mcp_config             │ │
+│  │  └── DB: query/add/update_memory, get_stats               │ │
+│  │                                                           │ │
+│  │  Entry points (all go through same agent):                │ │
+│  │  ├── IPC: daemon sends Episode → agent ingests            │ │
+│  │  ├── IPC: MCP tool call → agent retrieves                 │ │
+│  │  └── IPC: CLI command → agent executes                    │ │
 │  └───────────────────────────────────────────────────────────┘ │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │  Embeddings  │  │  Retrieval   │  │   "Why" Generator    │  │
-│  │ (ONNX model) │  │ (similarity) │  │ (heuristic templates)│  │
-│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
+│  ┌──────────────┐  ┌──────────────┐                            │
+│  │  Embeddings  │  │  Retrieval   │                            │
+│  │ (ONNX model) │  │ (similarity) │                            │
+│  └──────────────┘  └──────────────┘                            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 | Component | Language | Role |
 |-----------|----------|------|
-| **Rust Daemon** | Rust | Log watcher, SQLite + sqlite-vec, MCP server, CLI |
-| **Memory Service** | Python | Router Agent (dual-mode), ONNX embeddings, retrieval |
+| **Rust Daemon** | Rust | Log watcher, SQLite + sqlite-vec, MCP server, thin CLI |
+| **Python Agent** | Python | Unified agent with tools, ONNX embeddings, retrieval |
 
 ## Quick Start
 
 ```bash
-brew install sqrl
-sqrl daemon start
-cd ~/my-project && sqrl init
-# Done - Squirrel now watches and learns
+# Install (detects OS automatically)
+curl -sSL https://sqrl.dev/install.sh | sh
+
+# Natural language - just talk to it
+sqrl "setup for this project"
+sqrl "what do you know about auth here"
+sqrl "show my coding style"
+
+# Or direct commands if you prefer
+sqrl init
+sqrl search "database patterns"
+sqrl status
+```
+
+## Installation
+
+| Platform | Method |
+|----------|--------|
+| **Mac** | `brew install sqrl` or install script |
+| **Linux** | Install script, AUR (Arch), nixpkg (NixOS) |
+| **Windows** | `winget install sqrl` or `scoop install sqrl` |
+
+Universal install script works on all platforms:
+```bash
+curl -sSL https://sqrl.dev/install.sh | sh
+```
+
+## How It Works
+
+### Daemon Lifecycle
+
+```
+First sqrl command → daemon starts automatically
+        ↓
+Daemon watches logs, processes events
+        ↓
+2 hours no activity → daemon stops (saves resources)
+        ↓
+Next sqrl command → daemon starts again
+```
+
+No manual daemon management. No system services. Just works.
+
+### Project Initialization
+
+```bash
+cd ~/my-project
+sqrl init
+```
+
+This:
+1. Scans CLI log folders for logs mentioning this project
+2. Ingests recent history (token-limited, small projects get all, large projects get recent)
+3. Creates `.sqrl/squirrel.db` for project memories
+4. Detects which CLIs you use and offers to configure MCP
+
+Skip history ingestion:
+```bash
+sqrl init --skip-history
+```
+
+### Passive Learning (Write Path)
+
+```
+User codes with Claude Code normally
+        ↓
+Claude Code writes to ~/.claude/projects/**/*.jsonl
+        ↓
+Rust Daemon tails JSONL files → normalized Events
+        ↓
+Buffers events, flushes as Episode (4hr window OR 50 events)
+        ↓
+Python Agent analyzes Episode:
+  - Segments into Tasks ("fix auth bug", "add endpoint")
+  - Classifies: SUCCESS | FAILURE | UNCERTAIN
+  - Extracts memories:
+      SUCCESS → recipe or project_fact
+      FAILURE → pitfall
+      UNCERTAIN → skip
+        ↓
+Near-duplicate check (0.9 threshold) → store or merge
+```
+
+### Context Retrieval (Read Path)
+
+```
+Claude Code calls MCP: squirrel_get_task_context
+        ↓
+Agent retrieves relevant memories
+        ↓
+Scores by: similarity + importance + recency
+        ↓
+Returns within token budget + "why" explanations
+        ↓
+Claude Code uses context for better response
+```
+
+For trivial queries ("fix typo"), agent returns empty fast (<20ms).
+
+## Natural Language CLI
+
+The CLI understands natural language. Same agent that handles memory handles your commands:
+
+```bash
+sqrl "init this project but skip old logs"
+sqrl "what went wrong with the postgres migration"
+sqrl "forget the memory about deprecated API"
+sqrl "configure gemini cli to use squirrel"
+sqrl "show my profile"
+sqrl "I prefer functional programming style"
+```
+
+Direct commands still work:
+```bash
+sqrl init --skip-history
+sqrl search "postgres"
+sqrl forget <memory-id>
+sqrl config set llm.model claude-sonnet
 ```
 
 ## MCP Tools
@@ -72,39 +190,6 @@ cd ~/my-project && sqrl init
 | `squirrel_get_task_context` | Task-aware memory with "why" explanations |
 | `squirrel_search_memory` | Semantic search across all memory |
 
-## How It Works
-
-### Input: Passive Log Watching + Success Detection
-
-```
-~/.claude/projects/**/*.jsonl  ──┐
-~/.codex-cli/logs/**/*.jsonl   ──┼──→ Rust Daemon ──→ Events ──→ Episodes
-~/.gemini/logs/**/*.jsonl      ──┤                        ↓
-~/.cursor-tutor/logs/**/*.jsonl──┘               Python INGEST mode
-                                                         ↓
-                                              LLM analyzes Episode:
-                                              1. Segment Tasks
-                                              2. Classify: SUCCESS | FAILURE | UNCERTAIN
-                                              3. Extract memories by outcome
-```
-
-**Why success detection matters:** Without it, we'd blindly store all patterns - including the 4 failed approaches before the 1 that worked. With success detection:
-- SUCCESS → recipe/project_fact (reusable patterns)
-- FAILURE → pitfall (what NOT to do next time)
-- UNCERTAIN → skip (not enough info)
-
-### Output: MCP Tools
-
-```
-AI calls squirrel_get_task_context("Add delete endpoint")
-                    ↓
-            Rust MCP Server
-                    ↓ IPC
-         Python ROUTE mode + Retrieval
-                    ↓
-      Returns relevant memories + "why" explanations
-```
-
 ## Memory Types
 
 | Type | Description | Example |
@@ -112,26 +197,40 @@ AI calls squirrel_get_task_context("Add delete endpoint")
 | `user_style` | Coding preferences | "Prefers async/await" |
 | `project_fact` | Project knowledge | "Uses PostgreSQL 15" |
 | `pitfall` | Known issues | "API returns 500 on null user_id" |
-| `recipe` | Common patterns | "Use repository pattern for DB" |
+| `recipe` | Successful patterns | "Use repository pattern for DB" |
 
-## Memory Fields
+## Storage Layout
 
-| Field | Description |
-|-------|-------------|
-| `importance` | critical / high / medium / low - used in retrieval scoring |
-| `repo` | repo path OR 'global' for user-level memories |
-| `state` | active / deleted - soft-delete for recovery |
-| `user_id` | 'local' for v1, prepared for future cloud/team features |
-| `assistant_id` | 'squirrel' for v1, prepared for multi-agent scenarios |
+```
+~/.sqrl/
+├── config.toml                 # User settings, API keys
+├── squirrel.db                 # Global SQLite (user_style, user_profile)
+└── logs/                       # Daemon logs
 
-## Data Integrity
+<repo>/.sqrl/
+├── squirrel.db                 # Project SQLite (project memories)
+└── config.toml                 # Project overrides (optional)
+```
 
-| Feature | Purpose |
-|---------|---------|
-| History tracking | Logs old/new content on every ADD/UPDATE/DELETE for audit trail |
-| Access logging | Logs every memory retrieval with query and score for debugging |
-| UUID→integer mapping | Prevents LLM hallucinating memory IDs during dedup |
-| Soft-delete | state='deleted' instead of hard delete for recovery |
+### Database Layers
+
+| Layer | Location | Contents |
+|-------|----------|----------|
+| **User** | `~/.sqrl/squirrel.db` | user_style, user_profile |
+| **Project** | `<project>/.sqrl/squirrel.db` | project_fact, pitfall, recipe |
+
+## Configuration
+
+```toml
+# ~/.sqrl/config.toml
+[llm]
+api_key = "sk-ant-..."
+model = "claude-sonnet-4-20250514"
+small_model = "claude-haiku"      # For agent operations
+
+[daemon]
+idle_timeout_hours = 2            # Stop after N hours inactive
+```
 
 ## Project Structure
 
@@ -139,37 +238,24 @@ AI calls squirrel_get_task_context("Add delete endpoint")
 Squirrel/
 ├── agent/                      # Rust daemon + CLI + MCP
 │   └── src/
-│       ├── daemon.rs           # Process management
+│       ├── daemon.rs           # Lazy start, idle shutdown
 │       ├── watcher.rs          # Multi-CLI log watching
 │       ├── storage.rs          # SQLite + sqlite-vec
 │       ├── ipc.rs              # Unix socket client
-│       ├── mcp.rs              # MCP server (2 tools)
-│       └── cli.rs              # CLI commands
+│       ├── mcp.rs              # MCP server
+│       └── cli.rs              # Thin CLI, passes to agent
 │
-├── memory_service/             # Python Memory Service
+├── memory_service/             # Python Agent
 │   └── squirrel_memory/
 │       ├── server.py           # Unix socket IPC server
-│       ├── router_agent.py     # Dual-mode router (INGEST/ROUTE)
+│       ├── agent.py            # Unified agent with tools
+│       ├── tools/              # Tool implementations
 │       ├── embeddings.py       # ONNX embeddings
-│       └── retrieval.py        # Similarity search + "why"
+│       └── retrieval.py        # Similarity search
 │
-├── DEVELOPMENT_PLAN.md         # Implementation roadmap
-├── EXAMPLE.md                  # Detailed walkthrough
-└── README.md                   # This file
-```
-
-### Runtime Directories
-
-```
-~/.sqrl/
-├── config.toml                 # User settings, API keys
-├── squirrel.db                 # Global SQLite (user_style)
-├── projects.json               # Registered repos
-└── logs/                       # Daemon logs
-
-<repo>/.sqrl/
-├── squirrel.db                 # Project SQLite (project memories)
-└── config.toml                 # Project overrides (optional)
+└── docs/
+    ├── DEVELOPMENT_PLAN.md
+    └── EXAMPLE.md
 ```
 
 ## Development Setup
@@ -182,9 +268,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Python via uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# SQLite (usually pre-installed)
-sqlite3 --version
 ```
 
 ### Build
@@ -202,33 +285,24 @@ uv venv && uv pip install -e ".[dev]"
 source .venv/bin/activate && pytest
 ```
 
-### Run
+## v1 Scope
 
-```bash
-# Start daemon
-cd agent && cargo run -- daemon start
+**In:**
+- Passive log watching (4 CLIs)
+- Success detection (SUCCESS/FAILURE/UNCERTAIN classification)
+- Unified Python agent with tools
+- Natural language CLI
+- MCP integration (2 tools)
+- Lazy daemon (start on demand, stop after 2hr idle)
+- Retroactive log ingestion on init (token-limited)
+- 4 memory types + user_profile
+- Near-duplicate deduplication (0.9 threshold)
+- Cross-platform (Mac, Linux, Windows)
+- `sqrl update` command
 
-# Initialize project
-cd ~/my-project && sqrl init
+**v1.1:** Auto-update, LLM-based retrieval reranking, memory consolidation
 
-# Configure Claude Code MCP (add to ~/.claude/mcp.json)
-# "squirrel": {"command": "sqrl", "args": ["mcp"]}
-```
-
-## Configuration
-
-```toml
-# ~/.sqrl/config.toml
-[user]
-id = "alice"
-
-[llm]
-anthropic_api_key = "sk-ant-..."
-default_model = "claude-sonnet-4-20250514"
-
-[daemon]
-socket_path = "/tmp/sqrl_router.sock"
-```
+**v2:** Hooks output, file injection (AGENTS.md/GEMINI.md), cloud sync, team sharing
 
 ## Contributing
 
@@ -247,26 +321,6 @@ cargo fmt && cargo clippy
 # Python
 ruff check --fix . && ruff format .
 ```
-
-## v1 Scope
-
-**In:**
-- Passive log watching (4 CLIs) - 100% invisible during use
-- **Success detection: LLM classifies task outcomes (SUCCESS/FAILURE/UNCERTAIN)**
-- **Outcome-based memory extraction (SUCCESS→recipe, FAILURE→pitfall)**
-- 2 MCP tools
-- 4 memory types with importance levels
-- Dual-mode Router Agent (INGEST + ROUTE)
-- Near-duplicate deduplication (0.9 similarity threshold)
-- Heuristic scoring: similarity + importance + recency
-- SQLite + sqlite-vec
-- Soft-delete (state column), history tracking, access logging
-- UUID→integer mapping for LLM (prevents hallucination)
-- Structured exceptions with error codes
-
-**v1.1:** Two-level ROUTE (LLM selection for complex cases), user importance override, memory state expansion (paused/archived)
-
-**v2:** Hooks output, file injection (AGENTS.md/GEMINI.md), cloud sync, team sharing, reranker layer
 
 ## License
 
