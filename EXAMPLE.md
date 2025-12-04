@@ -1,10 +1,10 @@
 # Squirrel: Complete Process Walkthrough
 
-Detailed example demonstrating the entire Squirrel data flow from user coding to personalized AI context.
+Detailed example demonstrating the entire Squirrel data flow from installation to personalized AI context.
 
 ## Core Concept
 
-Squirrel watches AI tool logs, groups events into **Episodes** (4-hour time windows), and asks the Router Agent to analyze the entire session:
+Squirrel watches AI tool logs, groups events into **Episodes** (4-hour time windows), and sends them to a unified Python Agent for analysis:
 
 1. **Segment Tasks** - Identify distinct user goals within the episode
 2. **Classify Outcomes** - SUCCESS | FAILURE | UNCERTAIN for each task
@@ -27,24 +27,63 @@ Alice's coding preferences:
 
 ---
 
-## Phase 1: Setup
+## Phase 1: Installation & Setup
+
+### Step 1.1: Install Squirrel
 
 ```bash
-brew install sqrl
-sqrl daemon start
+# Universal install (Mac/Linux/Windows)
+curl -sSL https://sqrl.dev/install.sh | sh
+
+# Or platform-specific
+brew install sqrl          # Mac
+winget install sqrl        # Windows
+```
+
+### Step 1.2: First Command Starts Daemon
+
+```bash
 cd ~/projects/inventory-api
 sqrl init
 ```
 
-File structure:
+What happens:
+1. First `sqrl` command auto-starts daemon (lazy start)
+2. `sqrl init` triggers agent via IPC
+3. Agent scans for CLI log folders containing this project
+4. Agent asks: ingest historical logs? (token-limited, not time-limited)
+5. Creates `.sqrl/squirrel.db` for project memories
+6. Detects installed CLIs (Claude Code, Codex, Gemini CLI, Cursor)
+7. Offers to configure MCP for each detected CLI
+
+File structure after init:
 ```
 ~/.sqrl/
-├── config.toml           # API keys
-├── squirrel.db           # Global SQLite (user_style memories)
-└── projects.json         # Registered repos
+├── config.toml           # API keys, settings
+├── squirrel.db           # Global SQLite (user_style, user_profile)
+└── logs/                 # Daemon logs
 
 ~/projects/inventory-api/.sqrl/
-└── squirrel.db           # Project SQLite (events, memories)
+└── squirrel.db           # Project SQLite (project_fact, pitfall, recipe)
+```
+
+### Step 1.3: Natural Language CLI
+
+The agent handles all CLI commands:
+
+```bash
+sqrl "what do you know about auth here"
+sqrl "show my coding style"
+sqrl "I prefer functional programming"
+sqrl "configure gemini cli to use squirrel"
+sqrl "forget the memory about deprecated API"
+```
+
+Or direct commands:
+```bash
+sqrl search "database patterns"
+sqrl status
+sqrl config set llm.model claude-sonnet
 ```
 
 ---
@@ -98,11 +137,9 @@ let event = Event {
 storage.save_event(event)?;
 ```
 
-**Note:** We don't track which CLI the event came from - all events are normalized to the same schema.
-
 ### Step 2.3: Episode Batching
 
-Episodes are created by **4-hour time windows** OR **50 events max** (whichever comes first):
+Episodes flush on **4-hour time window** OR **50 events max** (whichever comes first):
 
 ```rust
 fn should_flush_episode(buffer: &EventBuffer) -> bool {
@@ -113,7 +150,7 @@ fn should_flush_episode(buffer: &EventBuffer) -> bool {
     buffer.oldest_event_age() >= Duration::hours(window_hours)
 }
 
-// Flush triggers IPC call to Python
+// Flush triggers IPC call to Python Agent
 fn flush_episode(repo: &str, events: Vec<Event>) {
     let episode = Episode {
         id: generate_uuid(),
@@ -124,11 +161,8 @@ fn flush_episode(repo: &str, events: Vec<Event>) {
     };
 
     ipc_client.send(json!({
-        "method": "router_agent",
-        "params": {
-            "mode": "ingest",
-            "payload": { "episode": episode }
-        },
+        "method": "ingest_episode",
+        "params": { "episode": episode },
         "id": 1
     }));
 }
@@ -136,16 +170,14 @@ fn flush_episode(repo: &str, events: Vec<Event>) {
 
 ---
 
-## Phase 3: Memory Extraction (Python Service)
+## Phase 3: Memory Extraction (Python Agent)
 
-### Step 3.1: Router Agent INGEST Mode (Success Detection)
+### Step 3.1: Agent Analyzes Episode
 
-The LLM analyzes the entire Episode in ONE call - segmenting tasks, classifying outcomes, and extracting memories:
+The unified agent receives the Episode and uses its tools to analyze and store memories:
 
 ```python
-async def ingest_mode(payload: dict) -> dict:
-    episode = payload["episode"]
-
+async def ingest_episode(episode: dict) -> dict:
     # Build context from events
     context = "\n".join([
         f"[{e['kind']}] {e['content']}"
@@ -223,82 +255,34 @@ Analyze this session:
 Return only high-confidence memories. When in doubt, skip.
 ```
 
-### Step 3.2: UUID→Integer Mapping for LLM
+### Step 3.2: Near-Duplicate Check + Save Memory
 
-When showing existing memories to LLM for dedup, map UUIDs to simple integers to prevent hallucination:
-
-```python
-def prepare_memories_for_llm(memories: list[Memory]) -> tuple[list[dict], dict[str, str]]:
-    """LLMs can hallucinate UUIDs. Use simple integers instead."""
-    uuid_mapping = {}
-    prepared = []
-    for idx, memory in enumerate(memories):
-        uuid_mapping[str(idx)] = memory.id  # "0" -> "uuid-xxx-xxx"
-        prepared.append({"id": str(idx), "content": memory.content})
-    return prepared, uuid_mapping
-
-# After LLM response, map back to real UUIDs
-def restore_memory_ids(llm_response, uuid_mapping):
-    for item in llm_response:
-        if item.get("id") in uuid_mapping:
-            item["id"] = uuid_mapping[item["id"]]
-    return llm_response
-```
-
-### Step 3.3: Near-Duplicate Check + Save Memory
-
-If confidence >= 0.7 and action is ADD:
+Agent uses its DB tools to check for duplicates:
 
 ```python
 # Before saving, check for near-duplicates
-candidates = await retrieve_candidates(
+candidates = await db_tools.search_similar(
     repo=memory.repo,
-    task=memory.content,
+    content=memory.content,
     memory_types=[memory.memory_type],
     top_k=5
 )
 for candidate in candidates:
     if candidate.similarity >= 0.9:
-        # Near-duplicate found - LLM decides merge or skip
+        # Near-duplicate found - merge or skip
         return await merge_or_skip(memory, candidate)
-```
 
-If no duplicate found:
-
-```rust
-let memory = Memory {
-    id: generate_uuid(),
-    content_hash: hash(&content),
-    content: "Prefers async/await with type hints for all handlers",
-    memory_type: "user_style",
-    repo: "global",               // 'global' for user-level memories
-    embedding: embed(&content),   // 384-dim ONNX
-    confidence: 0.85,
-    importance: "high",           // LLM-assigned importance
-    state: "active",              // active | deleted (soft-delete)
-    user_id: "local",
-    assistant_id: "squirrel",
-    created_at: now(),
-    updated_at: now(),
-    deleted_at: None,             // NULL unless state='deleted'
-};
-storage.save_memory(memory)?;
-
-// Log to history table for audit trail
-storage.log_history(HistoryEntry {
-    memory_id: memory.id,
-    old_content: None,            // NULL for ADD
-    new_content: memory.content,
-    event: "ADD",
-    created_at: now(),
-});
+# No duplicate, save new memory
+await db_tools.add_memory(memory)
 ```
 
 ---
 
-## Phase 4: Context Retrieval
+## Phase 4: Context Retrieval (MCP)
 
 ### Step 4.1: MCP Tool Call
+
+Claude Code (or other AI tool) calls Squirrel via MCP:
 
 ```json
 {
@@ -311,40 +295,38 @@ storage.log_history(HistoryEntry {
 }
 ```
 
-### Step 4.2: Router Agent ROUTE Mode
+### Step 4.2: Agent Retrieves Context
+
+The agent receives the MCP request via IPC and uses its retrieval tools:
 
 ```python
-async def route_mode(payload: dict) -> dict:
-    task = payload["task"]
-    candidates = payload["candidates"]
-    budget = payload["context_budget_tokens"]
+async def get_task_context(project_root: str, task: str, budget: int) -> dict:
+    # For trivial queries, return empty fast
+    if is_trivial_task(task):  # "fix typo", "add comment"
+        return {"memories": [], "tokens_used": 0}
 
-    # v1: Heuristic scoring (no LLM call)
-    # score = w_sim * similarity + w_imp * importance_weight + w_rec * recency
-    # importance_weight: critical=1.0, high=0.75, medium=0.5, low=0.25
+    # Retrieve candidates from both DBs
+    candidates = await retrieval.search(
+        task=task,
+        project_root=project_root,
+        include_global=True  # user_style from global DB
+    )
+
+    # Score by: similarity + importance + recency
     scored = score_candidates(candidates, task)
     selected = select_within_budget(scored, budget)
-
-    # Log access for debugging retrieval behavior
-    for memory in selected:
-        await log_memory_access(
-            memory_id=memory.id,
-            access_type="get_context",
-            query=task,
-            score=memory.score,
-            metadata={"budget": budget, "selected_count": len(selected)}
-        )
 
     return {
         "memories": [
             {
-                "type": "user_style",
-                "content": "Prefers async/await with type hints",
-                "importance": "high",
-                "why": "Relevant because you're adding an HTTP endpoint"
+                "type": m.memory_type,
+                "content": m.content,
+                "importance": m.importance,
+                "why": generate_explanation(m, task)
             }
+            for m in selected
         ],
-        "tokens_used": 120
+        "tokens_used": count_tokens(selected)
     }
 ```
 
@@ -373,6 +355,34 @@ async def route_mode(payload: dict) -> dict:
 
 ---
 
+## Phase 5: Daemon Lifecycle
+
+### Lazy Start
+```
+User runs: sqrl search "auth"
+        ↓
+CLI checks if daemon running (Unix socket)
+        ↓
+Not running → CLI starts daemon in background
+        ↓
+Daemon starts → CLI connects → command executed
+```
+
+### Idle Shutdown
+```
+Daemon tracks last activity timestamp
+        ↓
+Every minute: check if idle > 2 hours
+        ↓
+If idle: flush any pending Episodes → graceful shutdown
+        ↓
+Next sqrl command → daemon starts again
+```
+
+No manual daemon management. No system services. Just works.
+
+---
+
 ## Data Schema
 
 ### Event (normalized from all CLIs)
@@ -397,46 +407,28 @@ CREATE TABLE memories (
     content_hash TEXT NOT NULL UNIQUE,
     content TEXT NOT NULL,
     memory_type TEXT NOT NULL,        -- user_style | project_fact | pitfall | recipe
-    repo TEXT NOT NULL,               -- repo path OR 'global' for user-level memories
+    repo TEXT NOT NULL,               -- repo path OR 'global'
     embedding BLOB,                   -- 384-dim float32
     confidence REAL NOT NULL,
     importance TEXT NOT NULL DEFAULT 'medium',  -- critical | high | medium | low
-    state TEXT NOT NULL DEFAULT 'active',       -- active | deleted (soft-delete)
+    state TEXT NOT NULL DEFAULT 'active',       -- active | deleted
     user_id TEXT NOT NULL DEFAULT 'local',
     assistant_id TEXT NOT NULL DEFAULT 'squirrel',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    deleted_at TEXT                             -- NULL unless state='deleted'
+    deleted_at TEXT
 );
 ```
 
-### Memory History (audit trail)
+### User Profile (separate from memories)
 
 ```sql
-CREATE TABLE memory_history (
-    id TEXT PRIMARY KEY,
-    memory_id TEXT NOT NULL,
-    old_content TEXT,          -- Previous content (NULL for ADD)
-    new_content TEXT NOT NULL, -- New content
-    event TEXT NOT NULL,       -- ADD | UPDATE | DELETE
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (memory_id) REFERENCES memories(id)
+CREATE TABLE user_profile (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,       -- JSON value
+    updated_at TEXT NOT NULL
 );
-```
-
-### Memory Access Log (debugging retrieval)
-
-```sql
-CREATE TABLE memory_access_log (
-    id TEXT PRIMARY KEY,
-    memory_id TEXT NOT NULL,
-    access_type TEXT NOT NULL,  -- search | get_context | list
-    query TEXT,                 -- The query that triggered access
-    score REAL,                 -- Similarity score at access time
-    metadata TEXT,              -- JSON: additional debug info
-    accessed_at TEXT NOT NULL,
-    FOREIGN KEY (memory_id) REFERENCES memories(id)
-);
+-- Keys: name, role, preferred_languages, common_frameworks, etc.
 ```
 
 ---
@@ -445,13 +437,16 @@ CREATE TABLE memory_access_log (
 
 | Phase | What Happens |
 |-------|--------------|
-| Setup | `sqrl init` registers project |
+| Install | Universal script or package manager |
+| First Command | Lazy daemon start, no system service |
+| Init | Agent scans logs, optional history ingestion, configures MCP |
 | Learning | Daemon watches CLI logs, parses to Events |
-| Batching | Groups events into Episodes (4-hour window OR 50 events) |
-| **Success Detection** | LLM segments Tasks, classifies SUCCESS/FAILURE/UNCERTAIN |
+| Batching | Groups events into Episodes (4hr OR 50 events) |
+| **Success Detection** | Agent segments Tasks, classifies SUCCESS/FAILURE/UNCERTAIN |
 | Extraction | SUCCESS→recipe/project_fact, FAILURE→pitfall, UNCERTAIN→skip |
 | Dedup | Near-duplicate check (0.9 similarity) before ADD |
-| Retrieval | MCP tool → ROUTE mode scores by similarity+importance+recency → select within token budget |
+| Retrieval | MCP → Agent scores by similarity+importance+recency → returns within budget |
+| Idle | 2hr no activity → daemon stops, next command restarts |
 
 ### Why Success Detection Matters
 
@@ -460,7 +455,7 @@ Without success detection, we'd blindly store patterns without knowing if they w
 - Old approach: Store all 5 as "patterns" (4 are wrong!)
 - With success detection: Store #1-4 as pitfalls, #5 as recipe
 
-This is the core insight from analyzing claude-cache: passive learning REQUIRES outcome classification.
+This is the core insight: passive learning REQUIRES outcome classification.
 
 ---
 
@@ -468,19 +463,17 @@ This is the core insight from analyzing claude-cache: passive learning REQUIRES 
 
 | Decision | Choice | Why |
 |----------|--------|-----|
+| **Unified Agent** | Single Python agent with tools | One LLM brain for all operations |
+| **Lazy Daemon** | Start on command, stop after 2hr idle | No system service complexity |
 | Episode trigger | 4-hour window OR 50 events | Balance context vs LLM cost |
-| **Success detection** | LLM classifies outcomes | Core insight for passive learning |
-| **Task segmentation** | LLM decides, no rules engine | Simple, semantic understanding |
-| **Memory extraction** | Outcome-based (SUCCESS→recipe, FAILURE→pitfall) | Learn from both success and failure |
-| Session tracking | None | Simpler, CLI-agnostic |
-| Event schema | Normalized (no CLI field) | All CLIs treated equally |
-| Episode storage | Not stored | Just internal batching |
-| User-level memories | repo='global' | Simpler than separate flag |
-| Importance levels | critical/high/medium/low | Prioritize memories in retrieval |
+| Success detection | LLM classifies outcomes | Core insight for passive learning |
+| Task segmentation | LLM decides, no rules engine | Simple, semantic understanding |
+| Memory extraction | Outcome-based | Learn from both success and failure |
+| **Natural language CLI** | Thin shell passes to agent | "By the way" - agent handles all |
+| **Retroactive ingestion** | Token-limited, not time-limited | Fair for all project sizes |
+| User profile | Separate table from user_style | Structured vs unstructured |
+| Database layers | Global + Project SQLite | user_style/profile global, rest per-project |
 | Near-duplicate threshold | 0.9 similarity | Avoid redundant memories |
-| ROUTE mode (v1) | Heuristic scoring | Fast, no LLM call needed |
-| UUID→integer mapping | Map before LLM, restore after | Prevents LLM hallucinating UUIDs |
-| Memory deletion | Soft-delete (state column) | Recoverable, audit trail |
-| History tracking | old/new content per change | Debug, rollback capability |
-| Access logging | Log every retrieval | Debug why memories surface |
-| **100% passive** | No user prompts or confirmations | Invisible during use |
+| Trivial query fast-path | Return empty <20ms | No wasted LLM calls |
+| **Cross-platform** | Mac, Linux, Windows from v1 | All platforms supported |
+| 100% passive | No user prompts during coding | Invisible during use |
