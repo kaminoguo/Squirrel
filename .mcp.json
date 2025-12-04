@@ -1,0 +1,80 @@
+{
+  "mcpServers": {
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp"
+    },
+    "filesystem": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/home/lyrica/.npm/_npx/a3241bba59c344f5/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js",
+        "/home/lyrica/Offer_I"
+      ],
+      "env": {}
+    },
+    "github": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/home/lyrica/.npm/_npx/3dfbf5a9eea4a1b3/node_modules/@modelcontextprotocol/server-github/dist/index.js"
+      ],
+      "env": {
+        "GITHUB_TOKEN": "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"
+      }
+    },
+    "firecrawl": {
+      "type": "stdio",
+      "command": "/home/lyrica/Offer_I/.firecrawl-mcp-wrapper.sh",
+      "args": [],
+      "env": {
+        "FIRECRAWL_API_URL": "http://127.0.0.1:3002",
+        "FIRECRAWL_API_KEY": "fc-local-test-key"
+      }
+    },
+    "deepwiki": {
+      "type": "sse",
+      "url": "https://mcp.deepwiki.com/sse"
+    },
+    "github-hosted": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "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"
+      }
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest",
+        "--user-data-dir=./playwright-profile",
+        "--headless",
+        "--browser=chromium"
+      ],
+      "env": {}
+    },
+    "bright-data": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "@brightdata/mcp"
+      ],
+      "env": {
+        "API_TOKEN": "d5822896f2b414ae02df8c5cc1991ecca7b8b97542bc6086cfaa76304788497d",
+        "WEB_UNLOCKER_ZONE": "mcp_unlocker",
+        "BROWSER_ZONE": "mcp_browser"
+      }
+    },
+    "exa": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/home/lyrica/Offer_I/exa-mcp-server-official/.smithery/stdio/index.cjs"
+      ],
+      "env": {
+        "EXA_API_KEY": "8c942d3a-744c-4666-a1d4-ca9b2842e6e5"
+      }
+    }
+  }
+}

@@ -1,7 +1,0 @@
-[install]
-# Automatically install @types packages
-auto = "auto"
-
-[test]
-# Preload tsconfig-paths for @ imports
-preload = ["./tests/setup.ts"]
