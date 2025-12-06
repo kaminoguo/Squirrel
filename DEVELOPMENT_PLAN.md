@@ -50,7 +50,7 @@ Modular development plan with Rust daemon + Python Agent communicating via Unix 
 │  └── IPC: CLI command → agent executes                          │
 │                                                                 │
 │  ONNX Embeddings (all-MiniLM-L6-v2, 384-dim)                    │
-│  Retrieval (similarity + importance + recency scoring)          │
+│  2-tier LLM: strong (ingest) + fast (compose, CLI, dedup)       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -241,7 +241,8 @@ Paths:
 - `<repo>/.sqrl/` (project)
 
 Config fields:
-- llm.api_key, llm.model, llm.small_model
+- llm.provider, llm.api_key, llm.base_url
+- llm.strong_model, llm.fast_model (2-tier design)
 - daemon.idle_timeout_hours (default: 2)
 - daemon.socket_path
 
@@ -308,7 +309,14 @@ async def handle_connection(reader, writer):
 
 ### C2. Squirrel Agent (`agent.py`)
 
-Single LLM-powered agent with tools using PydanticAI framework. Uses cheap fast model (Gemini Flash/DeepSeek).
+Single LLM-powered agent with tools using PydanticAI framework. Uses 2-tier LLM design:
+
+| Task | Model Tier | Default |
+|------|------------|---------|
+| Episode Ingestion | strong_model | gemini-2.5-pro |
+| Context Compose | fast_model | gemini-3-flash |
+| CLI Interpretation | fast_model | gemini-3-flash |
+| Near-duplicate Check | fast_model | gemini-3-flash |
 
 ```python
 class SquirrelAgent:
@@ -388,7 +396,14 @@ UserProfile schema:
 
 **search_memories(query, filters):** Embed query, sqlite-vec search, return ranked results
 
-**get_task_context(task, budget):** Search + score (similarity + importance + recency) + select within token budget + generate "why" explanations
+**get_task_context(task, budget):**
+1. Vector search retrieves top 20 candidates
+2. LLM (fast_model) reranks + composes context prompt:
+   - Selects relevant memories
+   - Resolves conflicts
+   - Merges related memories
+   - Generates structured prompt with memory IDs
+3. Returns ready-to-inject context prompt within token budget
 
 **forget_memory(id):** Soft-delete (set state='deleted')
 

@@ -151,11 +151,15 @@ Near-duplicate check (0.9 threshold) → store or merge
 ```
 Claude Code calls MCP: squirrel_get_task_context
         ↓
-Agent retrieves relevant memories
+Vector search retrieves candidate memories (top 20)
         ↓
-Scores by: similarity + importance + recency
+LLM reranks candidates + composes context prompt:
+  - Selects relevant memories
+  - Resolves conflicts between memories
+  - Merges related memories
+  - Generates structured prompt with memory IDs
         ↓
-Returns within token budget + "why" explanations
+Returns ready-to-inject context prompt
         ↓
 Claude Code uses context for better response
 ```
@@ -224,13 +228,26 @@ sqrl config set llm.model claude-sonnet
 ```toml
 # ~/.sqrl/config.toml
 [llm]
-provider = "gemini"               # gemini | deepseek | openai | anthropic
+provider = "gemini"               # gemini | openai | anthropic | ollama | ...
 api_key = "..."
-model = "gemini-2.5-flash"        # Primary model for agent
+base_url = ""                     # Optional, for local models (Ollama, LMStudio)
+
+# 2-tier model design
+strong_model = "gemini-2.5-pro"   # Complex reasoning (episode ingestion)
+fast_model = "gemini-3-flash"     # Fast tasks (context compose, CLI, dedup)
 
 [daemon]
 idle_timeout_hours = 2            # Stop after N hours inactive
 ```
+
+### LLM Usage
+
+| Task | Model | Why |
+|------|-------|-----|
+| Episode Ingestion | strong_model | Multi-step reasoning over ~10K tokens |
+| Context Compose | fast_model | Rerank + generate structured prompt |
+| CLI Interpretation | fast_model | Parse natural language commands |
+| Near-duplicate Check | fast_model | Simple comparison |
 
 ## Project Structure
 
@@ -300,7 +317,7 @@ source .venv/bin/activate && pytest
 - Cross-platform (Mac, Linux, Windows)
 - `sqrl update` command
 
-**v1.1:** Auto-update, LLM-based retrieval reranking, memory consolidation
+**v1.1:** Auto-update, memory consolidation, retrieval debugging tools
 
 **v2:** Hooks output, file injection (AGENTS.md/GEMINI.md), cloud sync, team sharing
 

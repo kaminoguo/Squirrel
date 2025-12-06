@@ -295,63 +295,78 @@ Claude Code (or other AI tool) calls Squirrel via MCP:
 }
 ```
 
-### Step 4.2: Agent Retrieves Context
+### Step 4.2: Vector Search (Candidate Retrieval)
 
-The agent receives the MCP request via IPC and uses its retrieval tools:
+The agent receives the MCP request via IPC and retrieves candidates:
 
 ```python
 async def get_task_context(project_root: str, task: str, budget: int) -> dict:
-    # For trivial queries, return empty fast
+    # For trivial queries, return empty fast (<20ms)
     if is_trivial_task(task):  # "fix typo", "add comment"
-        return {"memories": [], "tokens_used": 0}
+        return {"context_prompt": "", "memory_ids": [], "tokens_used": 0}
 
-    # Retrieve candidates from both DBs
+    # Vector search retrieves top 20 candidates from both DBs
     candidates = await retrieval.search(
         task=task,
         project_root=project_root,
-        include_global=True  # user_style from global DB
+        include_global=True,  # user_style from global DB
+        top_k=20
+    )
+    # candidates now contains ~20 memories ranked by embedding similarity
+```
+
+### Step 4.3: LLM Rerank + Compose (fast_model)
+
+LLM reranks candidates and composes a context prompt in ONE call:
+
+```python
+    # LLM reranks + composes context prompt (uses fast_model)
+    response = await llm.call(
+        model=config.fast_model,  # gemini-3-flash
+        prompt=COMPOSE_PROMPT.format(
+            task=task,
+            candidates=format_candidates(candidates),
+            budget=budget
+        )
     )
 
-    # Score by: similarity + importance + recency
-    scored = score_candidates(candidates, task)
-    selected = select_within_budget(scored, budget)
-
     return {
-        "memories": [
-            {
-                "type": m.memory_type,
-                "content": m.content,
-                "importance": m.importance,
-                "why": generate_explanation(m, task)
-            }
-            for m in selected
-        ],
-        "tokens_used": count_tokens(selected)
+        "context_prompt": response.prompt,      # Ready-to-inject text
+        "memory_ids": response.selected_ids,    # For tracing
+        "tokens_used": count_tokens(response.prompt)
     }
 ```
 
-### Step 4.3: Response
+COMPOSE_PROMPT:
+```
+Task: {task}
+
+Candidate memories (ranked by similarity):
+{candidates}
+
+Select the most relevant memories for this task. Then compose a context prompt that:
+1. Prioritizes pitfalls (what NOT to do) first
+2. Includes relevant recipes and project_facts
+3. Resolves conflicts between memories (newer wins)
+4. Merges related memories to save tokens
+5. Stays within {budget} tokens
+
+Return:
+- selected_ids: list of memory IDs you selected
+- prompt: the composed context prompt for the AI tool
+```
+
+### Step 4.4: Response
 
 ```json
 {
-  "task": "Add a delete endpoint for inventory items",
-  "memories": [
-    {
-      "type": "user_style",
-      "content": "Prefers async/await with type hints for all handlers",
-      "importance": "high",
-      "why": "Relevant because you're adding an HTTP endpoint"
-    },
-    {
-      "type": "project_fact",
-      "content": "Uses FastAPI with Pydantic models",
-      "importance": "medium",
-      "why": "Relevant because delete endpoint needs proper response model"
-    }
-  ],
-  "tokens_used": 156
+  "context_prompt": "## Context from Squirrel\n\n**Style Preferences:**\n- Use async/await with type hints for all handlers [mem_abc123]\n\n**Project Facts:**\n- This project uses FastAPI with Pydantic models [mem_def456]\n\n**Relevant for this task:** You're adding an HTTP endpoint, so follow the async pattern and define a Pydantic response model.",
+  "memory_ids": ["mem_abc123", "mem_def456"],
+  "tokens_used": 89
 }
 ```
+
+The AI tool injects this `context_prompt` directly into its system prompt for better responses.
 
 ---
 
@@ -445,7 +460,7 @@ CREATE TABLE user_profile (
 | **Success Detection** | Agent segments Tasks, classifies SUCCESS/FAILURE/UNCERTAIN |
 | Extraction | SUCCESS→recipe/project_fact, FAILURE→pitfall, UNCERTAIN→skip |
 | Dedup | Near-duplicate check (0.9 similarity) before ADD |
-| Retrieval | MCP → Agent scores by similarity+importance+recency → returns within budget |
+| Retrieval | MCP → Vector search (top 20) → LLM reranks + composes context prompt |
 | Idle | 2hr no activity → daemon stops, next command restarts |
 
 ### Why Success Detection Matters
@@ -464,11 +479,13 @@ This is the core insight: passive learning REQUIRES outcome classification.
 | Decision | Choice | Why |
 |----------|--------|-----|
 | **Unified Agent** | Single Python agent with tools | One LLM brain for all operations |
+| **2-tier LLM** | strong_model + fast_model | Pro for complex reasoning, Flash for quick tasks |
 | **Lazy Daemon** | Start on command, stop after 2hr idle | No system service complexity |
 | Episode trigger | 4-hour window OR 50 events | Balance context vs LLM cost |
-| Success detection | LLM classifies outcomes | Core insight for passive learning |
+| Success detection | LLM classifies outcomes (strong_model) | Core insight for passive learning |
 | Task segmentation | LLM decides, no rules engine | Simple, semantic understanding |
 | Memory extraction | Outcome-based | Learn from both success and failure |
+| **Context compose** | LLM reranks + generates prompt (fast_model) | Better than math scoring, one call |
 | **Natural language CLI** | Thin shell passes to agent | "By the way" - agent handles all |
 | **Retroactive ingestion** | Token-limited, not time-limited | Fair for all project sizes |
 | User profile | Separate table from user_style | Structured vs unstructured |
