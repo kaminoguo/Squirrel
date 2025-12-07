@@ -49,7 +49,7 @@ Modular development plan with Rust daemon + Python Agent communicating via Unix 
 │  ├── IPC: MCP tool call → agent retrieves                       │
 │  └── IPC: CLI command → agent executes                          │
 │                                                                 │
-│  ONNX Embeddings (all-MiniLM-L6-v2, 384-dim)                    │
+│  API Embeddings (text-embedding-3-small, 1536-dim)              │
 │  2-tier LLM: strong (ingest) + fast (compose, CLI, dedup)       │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -132,7 +132,7 @@ agent/src/
 Dependencies:
 - `pydantic-ai` (agent framework)
 - `litellm` (multi-provider LLM support)
-- `onnxruntime` (embeddings)
+- `openai` (embeddings API client)
 - `pydantic` (schemas)
 
 Directory structure:
@@ -148,7 +148,7 @@ memory_service/
 │   │   ├── filesystem.py   # find_cli_configs, read/write_file
 │   │   ├── config.py       # init_project, mcp_config, user_profile
 │   │   └── db.py           # query, add, update memories
-│   ├── embeddings.py       # ONNX embeddings
+│   ├── embeddings.py       # API embeddings (OpenAI, etc.)
 │   ├── retrieval.py        # Similarity search
 │   └── schemas/
 └── tests/
@@ -162,19 +162,38 @@ memory_service/
 
 SQLite + sqlite-vec initialization:
 ```sql
--- memories table
+-- memories table (individual DB: squirrel.db)
 CREATE TABLE memories (
   id TEXT PRIMARY KEY,
   content_hash TEXT NOT NULL UNIQUE,
   content TEXT NOT NULL,
-  memory_type TEXT NOT NULL,        -- user_style | project_fact | pitfall | recipe
+  memory_type TEXT NOT NULL,        -- user_style | user_profile | process | pitfall | recipe | project_fact
   repo TEXT NOT NULL,               -- repo path OR 'global'
-  embedding BLOB,
+  embedding BLOB,                   -- 1536-dim float32 (text-embedding-3-small)
   confidence REAL NOT NULL,
   importance TEXT NOT NULL DEFAULT 'medium',  -- critical | high | medium | low
   state TEXT NOT NULL DEFAULT 'active',       -- active | deleted
   user_id TEXT NOT NULL DEFAULT 'local',
   assistant_id TEXT NOT NULL DEFAULT 'squirrel',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT
+);
+
+-- team memories table (group DB: group.db) - paid tier
+CREATE TABLE team_memories (
+  id TEXT PRIMARY KEY,
+  content_hash TEXT NOT NULL UNIQUE,
+  content TEXT NOT NULL,
+  memory_type TEXT NOT NULL,        -- team_style | team_profile | team_process | shared_pitfall | shared_recipe | shared_fact
+  repo TEXT NOT NULL,               -- repo path OR 'global'
+  embedding BLOB,                   -- 1536-dim float32
+  confidence REAL NOT NULL,
+  importance TEXT NOT NULL DEFAULT 'medium',
+  state TEXT NOT NULL DEFAULT 'active',
+  team_id TEXT NOT NULL,            -- team identifier
+  contributed_by TEXT NOT NULL,     -- user who shared this
+  source_memory_id TEXT,            -- original individual memory ID (if promoted)
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   deleted_at TEXT
@@ -240,11 +259,20 @@ Paths:
 - `~/.sqrl/` (global)
 - `<repo>/.sqrl/` (project)
 
+Files:
+- `squirrel.db` - individual memories (free)
+- `group.db` - team memories (paid, synced)
+- `config.toml` - settings
+
 Config fields:
 - llm.provider, llm.api_key, llm.base_url
 - llm.strong_model, llm.fast_model (2-tier design)
+- embedding.provider, embedding.model (default: openai/text-embedding-3-small)
 - daemon.idle_timeout_hours (default: 2)
 - daemon.socket_path
+- team.enabled, team.team_id (paid tier)
+- team.sync_mode (cloud | self-hosted | local)
+- team.sync_url (for self-hosted)
 
 ---
 
@@ -378,10 +406,17 @@ UUID→integer mapping when showing existing memories to LLM (prevents hallucina
 
 ### C4. Schemas (`schemas/`)
 
-Memory schema:
+Memory schema (individual):
 - id, content_hash, content, memory_type, repo, embedding
 - confidence, importance, state, user_id, assistant_id
 - created_at, updated_at, deleted_at
+- memory_type: user_style | user_profile | process | pitfall | recipe | project_fact
+
+TeamMemory schema (group, paid):
+- id, content_hash, content, memory_type, repo, embedding
+- confidence, importance, state, team_id, contributed_by, source_memory_id
+- created_at, updated_at, deleted_at
+- memory_type: team_style | team_profile | team_process | shared_pitfall | shared_recipe | shared_fact
 
 UserProfile schema:
 - key, value, source (explicit|inferred), confidence, updated_at
@@ -394,18 +429,27 @@ UserProfile schema:
 
 **ingest_episode(events):** LLM analysis, task segmentation, outcome classification, memory extraction
 
-**search_memories(query, filters):** Embed query, sqlite-vec search, return ranked results
+**search_memories(query, filters):** Embed query, sqlite-vec search, return ranked results (searches both individual and team DBs)
 
 **get_task_context(task, budget):**
-1. Vector search retrieves top 20 candidates
+1. Vector search retrieves top 20 candidates (from both individual and team DBs)
 2. LLM (fast_model) reranks + composes context prompt:
    - Selects relevant memories
-   - Resolves conflicts
+   - Resolves conflicts (team memories may override individual)
    - Merges related memories
    - Generates structured prompt with memory IDs
 3. Returns ready-to-inject context prompt within token budget
 
 **forget_memory(id):** Soft-delete (set state='deleted')
+
+**share_memory(id, target_type):** Promote individual memory to team DB (manual, opt-in)
+- Copy memory from squirrel.db to group.db
+- Set contributed_by, source_memory_id
+- Optional type conversion (e.g., pitfall → shared_pitfall)
+
+**export_memories(filters, format):** Export memories as JSON for sharing/backup
+
+**import_memories(data):** Import memories from JSON
 
 ### D2. Filesystem Tools (`tools/filesystem.py`)
 
@@ -426,6 +470,16 @@ UserProfile schema:
 
 **get_user_profile(), set_user_profile(key, value):** Manage user_profile table
 
+### D3.1 Team Tools (`tools/team.py`) - Paid Tier
+
+**team_join(team_id):** Join a team, enable sync
+
+**team_create(name):** Create new team, get team_id
+
+**team_sync():** Force sync with cloud/self-hosted server
+
+**team_leave():** Leave team, keep local copies of team memories
+
 ### D4. DB Tools (`tools/db.py`)
 
 **query_memories(filters):** Direct DB query with filtering
@@ -438,9 +492,9 @@ UserProfile schema:
 
 ### D5. Embeddings (`embeddings.py`)
 
-ONNX runtime with all-MiniLM-L6-v2 (384-dim).
+API-based embeddings via OpenAI (text-embedding-3-small, 1536-dim).
 
-Batch embedding, model cached in memory.
+Supports multiple providers via config. Batch embedding with retry logic.
 
 ### D6. Retrieval (`retrieval.py`)
 
@@ -496,6 +550,14 @@ Supports both natural language and direct commands:
 - `sqrl "setup this project"` → agent interprets
 - `sqrl init --skip-history` → agent interprets
 - `sqrl update` → self-update binary
+
+Team commands (paid tier):
+- `sqrl share <id>` → promote individual memory to team
+- `sqrl export <type>` → export memories as JSON
+- `sqrl import <file>` → import memories
+- `sqrl team join <team-id>` → join team
+- `sqrl team create <name>` → create team
+- `sqrl team sync` → force sync
 
 ---
 
@@ -554,19 +616,37 @@ Supports both natural language and direct commands:
 
 ---
 
-## v1.1 Scope (Future)
+## v1 Scope
 
-- Auto-update (background check + apply on restart)
-- LLM-based retrieval reranking for complex queries
-- Memory consolidation (periodic merging of similar memories)
-- `sqrl debug` command for retrieval debugging
+**Individual Features (Free):**
+- Passive log watching (4 CLIs)
+- Success detection (SUCCESS/FAILURE/UNCERTAIN)
+- Unified Python agent with tools
+- Natural language CLI
+- MCP integration (2 tools)
+- Lazy daemon (start on demand, stop after 2hr idle)
+- Retroactive log ingestion on init (token-limited)
+- 6 memory types (user_style, user_profile, process, pitfall, recipe, project_fact)
+- Near-duplicate deduplication (0.9 threshold)
+- Cross-platform (Mac, Linux, Windows)
+- Export/import memories (JSON)
+- Auto-update (`sqrl update`)
+- Memory consolidation
+- Retrieval debugging tools
+
+**Team Features (Paid):**
+- Cloud sync for group.db
+- Team memory types (team_style, team_profile, shared_*, team_process)
+- `sqrl share` command (promote individual to team)
+- Team management (create, join, sync)
+- Self-hosted option for enterprise
 
 ## v2 Scope (Future)
 
 - Hooks output for Claude Code / Gemini CLI
 - File injection for AGENTS.md / GEMINI.md
-- Cloud sync (user_id/assistant_id fields prepared)
-- Team memory sharing
+- Team analytics dashboard
+- Memory marketplace (export/sell recipe packs)
 - Web dashboard
 
 ---

@@ -1,6 +1,6 @@
 # Squirrel
 
-Local-first memory system for AI coding tools. Learns from your successes AND failures, providing personalized, task-aware context via MCP.
+Local-first memory system for AI coding tools. Learns from your successes AND failures, providing personalized, task-aware context via MCP. Supports individual and team memory layers.
 
 ## What It Does
 
@@ -13,6 +13,7 @@ You code with Claude Code / Codex / Cursor / Gemini CLI
                     ↓
     SUCCESS → recipe/project_fact memories
     FAILURE → pitfall memories (what NOT to do)
+    ALL → process memories (what happened, exportable)
                     ↓
     AI tools call MCP → get personalized context
                     ↓
@@ -50,7 +51,7 @@ You code with Claude Code / Codex / Cursor / Gemini CLI
 │  └───────────────────────────────────────────────────────────┘ │
 │  ┌──────────────┐  ┌──────────────┐                            │
 │  │  Embeddings  │  │  Retrieval   │                            │
-│  │ (ONNX model) │  │ (similarity) │                            │
+│  │  (API-based) │  │ (similarity) │                            │
 │  └──────────────┘  └──────────────┘                            │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -58,7 +59,7 @@ You code with Claude Code / Codex / Cursor / Gemini CLI
 | Component | Language | Role |
 |-----------|----------|------|
 | **Rust Daemon** | Rust | Log watcher, SQLite + sqlite-vec, MCP server, thin CLI |
-| **Python Agent** | Python | Unified agent with tools, ONNX embeddings, retrieval |
+| **Python Agent** | Python | Unified agent with tools, API embeddings, retrieval |
 
 ## Quick Start
 
@@ -187,6 +188,24 @@ sqrl forget <memory-id>
 sqrl config set llm.model claude-sonnet
 ```
 
+### Team Commands
+
+```bash
+# Share individual memory to team (manual, opt-in)
+sqrl share <memory-id>              # Promote to team DB
+sqrl share <memory-id> --as pitfall # Share with type conversion
+
+# Export/Import memories
+sqrl export pitfall                 # Export all pitfalls as JSON
+sqrl export recipe --project        # Export project recipes
+sqrl import memories.json           # Import memories
+
+# Team management (paid)
+sqrl team join <team-id>            # Join a team
+sqrl team create "Backend Team"     # Create team
+sqrl team sync                      # Force sync with cloud
+```
+
 ## MCP Tools
 
 | Tool | Purpose |
@@ -196,32 +215,59 @@ sqrl config set llm.model claude-sonnet
 
 ## Memory Types
 
-| Type | Description | Example |
-|------|-------------|---------|
-| `user_style` | Coding preferences | "Prefers async/await" |
-| `project_fact` | Project knowledge | "Uses PostgreSQL 15" |
-| `pitfall` | Known issues | "API returns 500 on null user_id" |
-| `recipe` | Successful patterns | "Use repository pattern for DB" |
+### Individual Memories (Free)
+
+| Type | Scope | Description | Example |
+|------|-------|-------------|---------|
+| `user_style` | Global | Your coding preferences | "Prefers async/await" |
+| `user_profile` | Global | Your info (name, role, skills) | "Backend dev, 5yr Python" |
+| `process` | Project | What happened (exportable) | "Tried X, failed, then Y worked" |
+| `pitfall` | Project | Issues you encountered | "API returns 500 on null user_id" |
+| `recipe` | Project | Patterns that worked for you | "Use repository pattern for DB" |
+| `project_fact` | Project | Project knowledge you learned | "Uses PostgreSQL 15" |
+
+### Team Memories (Paid - Cloud Sync)
+
+| Type | Scope | Description | Example |
+|------|-------|-------------|---------|
+| `team_style` | Global | Team coding standards | "Team uses ESLint + Prettier" |
+| `team_profile` | Global | Team info | "Backend team, 5 devs" |
+| `team_process` | Project | Shared what-happened logs | "Sprint 12: migrated to Redis" |
+| `shared_pitfall` | Project | Team-wide known issues | "Never use ORM for bulk inserts" |
+| `shared_recipe` | Project | Team-approved patterns | "Use factory pattern for tests" |
+| `shared_fact` | Project | Team project knowledge | "Prod DB is on AWS RDS" |
 
 ## Storage Layout
 
 ```
 ~/.sqrl/
 ├── config.toml                 # User settings, API keys
-├── squirrel.db                 # Global SQLite (user_style, user_profile)
+├── squirrel.db                 # Global individual (user_style, user_profile)
+├── group.db                    # Global team (team_style, team_profile) - synced
 └── logs/                       # Daemon logs
 
 <repo>/.sqrl/
-├── squirrel.db                 # Project SQLite (project memories)
+├── squirrel.db                 # Project individual (process, pitfall, recipe, project_fact)
+├── group.db                    # Project team (shared_*, team_process) - synced
 └── config.toml                 # Project overrides (optional)
 ```
 
-### Database Layers
+### 3-Layer Database Architecture
 
-| Layer | Location | Contents |
-|-------|----------|----------|
-| **User** | `~/.sqrl/squirrel.db` | user_style, user_profile |
-| **Project** | `<project>/.sqrl/squirrel.db` | project_fact, pitfall, recipe |
+| Layer | DB File | Contents | Sync |
+|-------|---------|----------|------|
+| **Global Individual** | `~/.sqrl/squirrel.db` | user_style, user_profile | Local only |
+| **Global Team** | `~/.sqrl/group.db` | team_style, team_profile | Cloud (paid) |
+| **Project Individual** | `<repo>/.sqrl/squirrel.db` | process, pitfall, recipe, project_fact | Local only |
+| **Project Team** | `<repo>/.sqrl/group.db` | shared_pitfall, shared_recipe, shared_fact, team_process | Cloud (paid) |
+
+### Team Database Options
+
+| Mode | Location | Use Case |
+|------|----------|----------|
+| **Cloud** (default) | Squirrel Cloud | Teams, auto-sync, paid tier |
+| **Self-hosted** | Your server | Enterprise, data sovereignty |
+| **Local file** | `group.db` file | Offline, manual export/import |
 
 ## Configuration
 
@@ -236,8 +282,18 @@ base_url = ""                     # Optional, for local models (Ollama, LMStudio
 strong_model = "gemini-2.5-pro"   # Complex reasoning (episode ingestion)
 fast_model = "gemini-3-flash"     # Fast tasks (context compose, CLI, dedup)
 
+[embedding]
+provider = "openai"               # openai | gemini | cohere | ...
+model = "text-embedding-3-small"  # 1536-dim, $0.10/M tokens
+
 [daemon]
 idle_timeout_hours = 2            # Stop after N hours inactive
+
+[team]                            # Paid tier
+enabled = false                   # Enable team features
+team_id = ""                      # Your team ID
+sync_mode = "cloud"               # cloud | self-hosted | local
+sync_url = ""                     # Custom sync URL (self-hosted only)
 ```
 
 ### LLM Usage
@@ -267,7 +323,7 @@ Squirrel/
 │       ├── server.py           # Unix socket IPC server
 │       ├── agent.py            # Unified agent with tools
 │       ├── tools/              # Tool implementations
-│       ├── embeddings.py       # ONNX embeddings
+│       ├── embeddings.py       # API embeddings (OpenAI, etc.)
 │       └── retrieval.py        # Similarity search
 │
 └── docs/
@@ -304,7 +360,7 @@ source .venv/bin/activate && pytest
 
 ## v1 Scope
 
-**In:**
+**Individual Features (Free):**
 - Passive log watching (4 CLIs)
 - Success detection (SUCCESS/FAILURE/UNCERTAIN classification)
 - Unified Python agent with tools
@@ -312,14 +368,22 @@ source .venv/bin/activate && pytest
 - MCP integration (2 tools)
 - Lazy daemon (start on demand, stop after 2hr idle)
 - Retroactive log ingestion on init (token-limited)
-- 4 memory types + user_profile
+- 6 memory types (user_style, user_profile, process, pitfall, recipe, project_fact)
 - Near-duplicate deduplication (0.9 threshold)
 - Cross-platform (Mac, Linux, Windows)
-- `sqrl update` command
+- Export/import memories (JSON)
+- Auto-update (`sqrl update`)
+- Memory consolidation
+- Retrieval debugging tools
 
-**v1.1:** Auto-update, memory consolidation, retrieval debugging tools
+**Team Features (Paid):**
+- Cloud sync for group.db
+- Team memory types (team_style, team_profile, shared_*, team_process)
+- `sqrl share` command (promote individual to team)
+- Team management (create, join, sync)
+- Self-hosted option for enterprise
 
-**v2:** Hooks output, file injection (AGENTS.md/GEMINI.md), cloud sync, team sharing
+**v2:** Hooks output, file injection (AGENTS.md/GEMINI.md), team analytics, memory marketplace
 
 ## Contributing
 

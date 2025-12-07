@@ -8,7 +8,7 @@ Squirrel watches AI tool logs, groups events into **Episodes** (4-hour time wind
 
 1. **Segment Tasks** - Identify distinct user goals within the episode
 2. **Classify Outcomes** - SUCCESS | FAILURE | UNCERTAIN for each task
-3. **Extract Memories** - SUCCESS→recipe/project_fact, FAILURE→pitfall, UNCERTAIN→skip
+3. **Extract Memories** - SUCCESS→recipe/project_fact, FAILURE→pitfall, ALL→process, UNCERTAIN→skip
 
 Episode = batch of events from same repo within 4-hour window (internal batching, not a product concept).
 
@@ -60,11 +60,13 @@ File structure after init:
 ```
 ~/.sqrl/
 ├── config.toml           # API keys, settings
-├── squirrel.db           # Global SQLite (user_style, user_profile)
+├── squirrel.db           # Global individual (user_style, user_profile)
+├── group.db              # Global team (team_style, team_profile) - synced, paid
 └── logs/                 # Daemon logs
 
 ~/projects/inventory-api/.sqrl/
-└── squirrel.db           # Project SQLite (project_fact, pitfall, recipe)
+├── squirrel.db           # Project individual (process, pitfall, recipe, project_fact)
+└── group.db              # Project team (shared_*, team_process) - synced, paid
 ```
 
 ### Step 1.3: Natural Language CLI
@@ -199,6 +201,12 @@ async def ingest_episode(episode: dict) -> dict:
                         "content": "Prefers async/await with type hints for all handlers",
                         "importance": "high",
                         "repo": "global",
+                    },
+                    {
+                        "type": "process",  # Always recorded for export
+                        "content": "Added GET /items/category endpoint with async handler, type hints, pytest fixture",
+                        "importance": "medium",
+                        "repo": "/Users/alice/projects/inventory-api",
                     }
                 ]
             },
@@ -217,6 +225,12 @@ async def ingest_episode(episode: dict) -> dict:
                         "type": "recipe",
                         "content": "For auth redirect loops, fix useEffect cleanup to prevent re-triggering on token refresh",
                         "importance": "high",
+                        "repo": "/Users/alice/projects/inventory-api",
+                    },
+                    {
+                        "type": "process",  # Always recorded for export
+                        "content": "Tried localStorage fix (failed), tried cookies fix (failed), useEffect cleanup fix worked",
+                        "importance": "medium",
                         "repo": "/Users/alice/projects/inventory-api",
                     }
                 ]
@@ -251,8 +265,9 @@ Analyze this session:
 3. For SUCCESS tasks: extract recipe (reusable pattern) or project_fact memories
 4. For FAILURE tasks: extract pitfall memories (what NOT to do)
 5. For tasks with failed attempts before success: extract BOTH pitfall AND recipe
+6. For ALL tasks: extract process memory (what happened, for export/audit)
 
-Return only high-confidence memories. When in doubt, skip.
+Return only high-confidence memories. When in doubt, skip (except process - always record).
 ```
 
 ### Step 3.2: Near-Duplicate Check + Save Memory
@@ -414,21 +429,43 @@ CREATE TABLE events (
 );
 ```
 
-### Memory
+### Individual Memory (squirrel.db - Free)
 
 ```sql
 CREATE TABLE memories (
     id TEXT PRIMARY KEY,
     content_hash TEXT NOT NULL UNIQUE,
     content TEXT NOT NULL,
-    memory_type TEXT NOT NULL,        -- user_style | project_fact | pitfall | recipe
+    memory_type TEXT NOT NULL,        -- user_style | user_profile | process | pitfall | recipe | project_fact
     repo TEXT NOT NULL,               -- repo path OR 'global'
-    embedding BLOB,                   -- 384-dim float32
+    embedding BLOB,                   -- 1536-dim float32 (text-embedding-3-small)
     confidence REAL NOT NULL,
     importance TEXT NOT NULL DEFAULT 'medium',  -- critical | high | medium | low
     state TEXT NOT NULL DEFAULT 'active',       -- active | deleted
     user_id TEXT NOT NULL DEFAULT 'local',
     assistant_id TEXT NOT NULL DEFAULT 'squirrel',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
+);
+```
+
+### Team Memory (group.db - Paid)
+
+```sql
+CREATE TABLE team_memories (
+    id TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL UNIQUE,
+    content TEXT NOT NULL,
+    memory_type TEXT NOT NULL,        -- team_style | team_profile | team_process | shared_pitfall | shared_recipe | shared_fact
+    repo TEXT NOT NULL,               -- repo path OR 'global'
+    embedding BLOB,                   -- 1536-dim float32
+    confidence REAL NOT NULL,
+    importance TEXT NOT NULL DEFAULT 'medium',
+    state TEXT NOT NULL DEFAULT 'active',
+    team_id TEXT NOT NULL,
+    contributed_by TEXT NOT NULL,
+    source_memory_id TEXT,            -- original individual memory (if promoted)
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     deleted_at TEXT
@@ -458,9 +495,11 @@ CREATE TABLE user_profile (
 | Learning | Daemon watches CLI logs, parses to Events |
 | Batching | Groups events into Episodes (4hr OR 50 events) |
 | **Success Detection** | Agent segments Tasks, classifies SUCCESS/FAILURE/UNCERTAIN |
-| Extraction | SUCCESS→recipe/project_fact, FAILURE→pitfall, UNCERTAIN→skip |
+| Extraction | SUCCESS→recipe/project_fact, FAILURE→pitfall, ALL→process, UNCERTAIN→skip |
 | Dedup | Near-duplicate check (0.9 similarity) before ADD |
-| Retrieval | MCP → Vector search (top 20) → LLM reranks + composes context prompt |
+| Retrieval | MCP → Vector search (top 20 from both DBs) → LLM reranks + composes context prompt |
+| Share (opt-in) | `sqrl share` promotes individual memory to team DB |
+| Team Sync | group.db syncs with cloud (paid) or self-hosted |
 | Idle | 2hr no activity → daemon stops, next command restarts |
 
 ### Why Success Detection Matters
@@ -485,12 +524,81 @@ This is the core insight: passive learning REQUIRES outcome classification.
 | Success detection | LLM classifies outcomes (strong_model) | Core insight for passive learning |
 | Task segmentation | LLM decides, no rules engine | Simple, semantic understanding |
 | Memory extraction | Outcome-based | Learn from both success and failure |
+| **Process memory** | Always recorded | Audit trail, exportable for sharing |
 | **Context compose** | LLM reranks + generates prompt (fast_model) | Better than math scoring, one call |
 | **Natural language CLI** | Thin shell passes to agent | "By the way" - agent handles all |
 | **Retroactive ingestion** | Token-limited, not time-limited | Fair for all project sizes |
 | User profile | Separate table from user_style | Structured vs unstructured |
-| Database layers | Global + Project SQLite | user_style/profile global, rest per-project |
+| **3-layer DB** | Individual (squirrel.db) + Team (group.db) | Free vs Paid, local vs cloud |
+| **Team sharing** | Manual opt-in via `sqrl share` | User controls what's shared |
+| **Team DB location** | Cloud (default) / Self-hosted / Local | Flexibility for enterprise |
 | Near-duplicate threshold | 0.9 similarity | Avoid redundant memories |
 | Trivial query fast-path | Return empty <20ms | No wasted LLM calls |
 | **Cross-platform** | Mac, Linux, Windows from v1 | All platforms supported |
 | 100% passive | No user prompts during coding | Invisible during use |
+
+---
+
+## Phase 6: Team Sharing (Paid)
+
+### Step 6.1: Alice Shares a Pitfall
+
+Alice finds a critical pitfall that should help the team:
+
+```bash
+sqrl share mem_abc123 --as shared_pitfall
+```
+
+What happens:
+1. Agent reads memory from `squirrel.db`
+2. Copies to `group.db` with type `shared_pitfall`
+3. Sets `contributed_by: alice`, `source_memory_id: mem_abc123`
+4. Syncs `group.db` to cloud
+
+### Step 6.2: Bob Gets Team Context
+
+Bob joins Alice's team and works on the same project:
+
+```bash
+sqrl team join abc-team-id
+```
+
+When Bob asks Claude Code to help with auth:
+1. MCP calls `squirrel_get_task_context`
+2. Vector search queries BOTH:
+   - Bob's `squirrel.db` (his individual memories)
+   - Team's `group.db` (shared team memories including Alice's pitfall)
+3. LLM composes context with both individual and team memories
+4. Bob gets Alice's auth pitfall in context without ever experiencing it himself
+
+### Step 6.3: Export for Onboarding
+
+Team lead exports all shared recipes for new developers:
+
+```bash
+sqrl export shared_recipe --project --format json > onboarding.json
+```
+
+New developer imports:
+```bash
+sqrl import onboarding.json
+```
+
+---
+
+## Memory Type Reference
+
+| Type | Scope | DB | Sync | Description |
+|------|-------|-----|------|-------------|
+| `user_style` | Global | squirrel.db | Local | Your coding preferences |
+| `user_profile` | Global | squirrel.db | Local | Your info (name, role) |
+| `process` | Project | squirrel.db | Local | What happened (exportable) |
+| `pitfall` | Project | squirrel.db | Local | Issues you encountered |
+| `recipe` | Project | squirrel.db | Local | Patterns that worked |
+| `project_fact` | Project | squirrel.db | Local | Project knowledge |
+| `team_style` | Global | group.db | Cloud | Team coding standards |
+| `team_profile` | Global | group.db | Cloud | Team info |
+| `team_process` | Project | group.db | Cloud | Shared what-happened |
+| `shared_pitfall` | Project | group.db | Cloud | Team-wide issues |
+| `shared_recipe` | Project | group.db | Cloud | Team-approved patterns |
+| `shared_fact` | Project | group.db | Cloud | Team project knowledge |
