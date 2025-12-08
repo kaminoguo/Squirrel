@@ -2,6 +2,23 @@
 
 Modular development plan with Rust daemon + Python Agent communicating via Unix socket IPC.
 
+## Technology Stack
+
+| Category | Technology | Notes |
+|----------|------------|-------|
+| **Storage** | SQLite + sqlite-vec | Local-first, vector search |
+| **IPC Protocol** | JSON-RPC 2.0 | MCP-compatible, over Unix socket |
+| **MCP SDK** | rmcp | Official Rust SDK (modelcontextprotocol/rust-sdk) |
+| **CLI Framework** | clap | Rust CLI parsing |
+| **Agent Framework** | PydanticAI | Python agent with tools |
+| **LLM Client** | LiteLLM | Multi-provider support |
+| **Embeddings** | OpenAI text-embedding-3-small | 1536-dim, API-based |
+| **Cloud Sync** | SQLite Session Extension | Changeset-based sync for team DB |
+| **Build/Release** | dist (cargo-dist) | Generates Homebrew, MSI, installers |
+| **Auto-update** | axoupdater | dist's official updater |
+| **Python Packaging** | PyInstaller | Bundled, zero user deps |
+| **Logging** | tracing (Rust), structlog (Python) | Structured logging |
+
 ## Architecture Overview
 
 ```
@@ -108,9 +125,11 @@ Storage) Daemon) Agent)  Tools)  CLI)
 Dependencies:
 - `tokio` (async runtime)
 - `rusqlite` + `sqlite-vec` (storage)
-- `serde`, `serde_json` (serialization)
+- `serde`, `serde_json` (serialization, JSON-RPC 2.0)
 - `notify` (file watching)
-- `clap` (CLI)
+- `clap` (CLI framework)
+- `rmcp` (official MCP SDK - modelcontextprotocol/rust-sdk)
+- `tracing` (structured logging)
 - `uuid`, `chrono` (ID, timestamps)
 
 Directory structure:
@@ -134,6 +153,7 @@ Dependencies:
 - `litellm` (multi-provider LLM support)
 - `openai` (embeddings API client)
 - `pydantic` (schemas)
+- `structlog` (structured logging)
 
 Directory structure:
 ```
@@ -313,11 +333,17 @@ On flush: create Episode, send to Python via IPC, mark events processed
 
 ### B4. IPC Client (`ipc.rs`)
 
-Unix socket client with JSON-RPC style protocol:
+Unix socket client with JSON-RPC 2.0 protocol (MCP-compatible):
 ```json
-{"method": "agent_execute", "params": {...}, "id": 123}
-{"result": {...}, "id": 123}
+{"jsonrpc": "2.0", "method": "ingest_episode", "params": {"episode": {...}}, "id": 1}
+{"jsonrpc": "2.0", "result": {"memories_created": 3}, "id": 1}
 ```
+
+Methods:
+- `ingest_episode` - Process episode, extract memories
+- `get_task_context` - MCP tool call
+- `search_memories` - MCP tool call
+- `execute_command` - CLI natural language/direct command
 
 ---
 
@@ -511,6 +537,8 @@ Access logging to memory_access_log table.
 
 ### E1. MCP Server (`mcp.rs`)
 
+Uses `rmcp` (official MCP SDK from modelcontextprotocol/rust-sdk).
+
 2 tools:
 ```
 squirrel_get_task_context
@@ -549,7 +577,7 @@ fn main() {
 Supports both natural language and direct commands:
 - `sqrl "setup this project"` → agent interprets
 - `sqrl init --skip-history` → agent interprets
-- `sqrl update` → self-update binary
+- `sqrl update` → auto-update via axoupdater
 
 Team commands (paid tier):
 - `sqrl share <id>` → promote individual memory to team
@@ -571,14 +599,28 @@ Team commands (paid tier):
 - Unit tests: storage, events, agent tools
 - Integration tests: full flow from log to memory to retrieval
 
-### Cross-Platform
-- Mac: brew + install script
-- Linux: install script + AUR + nixpkg
-- Windows: install script + winget + scoop
+### Build & Release (dist)
 
-### Update Mechanism
-- `sqrl update`: download latest binary, replace self
-- Auto-update in v1.1
+Uses `dist` (cargo-dist) as single release orchestrator:
+- Builds Rust daemon for Mac/Linux/Windows
+- Builds Python agent via PyInstaller (as dist workspace member)
+- Generates installers: Homebrew, MSI, shell/powershell scripts
+
+### Cross-Platform Installation
+
+| Platform | Primary | Fallback |
+|----------|---------|----------|
+| Mac | `brew install sqrl` | install script |
+| Linux | `brew install sqrl` | install script, AUR, nixpkg |
+| Windows | MSI installer | winget, install script |
+
+Windows note: MSI recommended over raw .exe to reduce SmartScreen/AV friction.
+
+### Auto-Update (axoupdater)
+
+- `sqrl update` uses axoupdater (dist's official updater)
+- Updates both Rust daemon and Python agent together
+- Reads dist install receipt to determine installed version/source
 
 ---
 

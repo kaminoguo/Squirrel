@@ -61,6 +61,19 @@ You code with Claude Code / Codex / Cursor / Gemini CLI
 | **Rust Daemon** | Rust | Log watcher, SQLite + sqlite-vec, MCP server, thin CLI |
 | **Python Agent** | Python | Unified agent with tools, API embeddings, retrieval |
 
+### Technology Stack
+
+| Layer | Technology | Notes |
+|-------|------------|-------|
+| **Storage** | SQLite + sqlite-vec | Local-first, vector search |
+| **IPC** | JSON-RPC 2.0 over Unix socket | MCP-compatible protocol |
+| **MCP SDK** | rmcp (official Rust SDK) | modelcontextprotocol/rust-sdk |
+| **Agent Framework** | PydanticAI + LiteLLM | Multi-provider LLM support |
+| **Embeddings** | OpenAI text-embedding-3-small | 1536-dim, API-based |
+| **Cloud Sync** | SQLite Session Extension | Changeset-based sync for team DB |
+| **Build/Release** | dist (cargo-dist) | Generates Homebrew, MSI, installers |
+| **Auto-update** | axoupdater | dist's official updater |
+
 ## Quick Start
 
 ```bash
@@ -82,13 +95,22 @@ sqrl status
 
 | Platform | Method |
 |----------|--------|
-| **Mac** | `brew install sqrl` or install script |
-| **Linux** | Install script, AUR (Arch), nixpkg (NixOS) |
-| **Windows** | `winget install sqrl` or `scoop install sqrl` |
+| **Mac** | `brew install sqrl` (recommended) or install script |
+| **Linux** | `brew install sqrl`, install script, AUR (Arch), nixpkg (NixOS) |
+| **Windows** | MSI installer (recommended), `winget install sqrl`, or install script |
 
-Universal install script works on all platforms:
+Universal install script (fallback):
 ```bash
+# Mac/Linux
 curl -sSL https://sqrl.dev/install.sh | sh
+
+# Windows (PowerShell)
+irm https://sqrl.dev/install.ps1 | iex
+```
+
+Auto-update:
+```bash
+sqrl update    # Updates both Rust daemon and Python agent
 ```
 
 ## How It Works
