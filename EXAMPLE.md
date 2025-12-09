@@ -12,7 +12,8 @@ Squirrel watches AI tool logs, groups events into **Episodes** (4-hour time wind
    - `RESEARCH_LEARNING` - learning, exploring docs
    - `DISCUSSION` - brainstorming, chat
 2. **Classify Outcomes** - Only for EXECUTION_TASK: SUCCESS | FAILURE | UNCERTAIN (with evidence)
-3. **Extract Memories** - Based on segment kind, not just success/failure
+3. **Detect Frustration** - Swear words, anger → boost memory importance
+4. **Extract Memories** - Based on segment kind, not just success/failure
 
 Episode = batch of events from same repo within 4-hour window (internal batching, not a product concept).
 
@@ -166,14 +167,14 @@ Alice: "Use async def, add type hints, and write a pytest fixture"
 Claude Code: [Revises code with async, types, fixture]
 Alice: "Perfect, tests pass!"
 
-# Task 2: Fix auth bug (FAILURE then SUCCESS)
+# Task 2: Fix auth bug (FAILURE then SUCCESS, with frustration)
 Alice: "There's an auth loop bug when tokens expire"
 Claude Code: "Let me check localStorage..."
 [Error persists]
 Alice: "Still broken"
 Claude Code: "Let me try checking cookies..."
 [Error persists]
-Alice: "That didn't work either"
+Alice: "This is so frustrating, we've been going in circles!"
 Claude Code: "I think the issue is in useEffect cleanup..."
 [Implements fix]
 Alice: "That fixed it, thanks!"
@@ -273,7 +274,8 @@ async def ingest_episode(episode: dict) -> dict:
                 "outcome": {
                     "status": "SUCCESS",
                     "evidence": ["User said 'That fixed it, thanks!'"]
-                }
+                },
+                "user_frustration": "moderate"
             }
         ],
         "memories": [
@@ -292,6 +294,8 @@ async def ingest_episode(episode: dict) -> dict:
                 "outcome": "failure",
                 "scope": "project",
                 "text": "Auth token refresh loops are NOT caused by localStorage or cookies - check useEffect cleanup first",
+                "importance": "high",
+                "metadata": {"user_frustration": "moderate"},
                 "source_segments": ["seg_2"],
                 "confidence": 0.9
             },
@@ -328,7 +332,7 @@ Analyze this coding session (~4 hours of activity):
 [assistant] Let me check localStorage...
 [user] Still broken
 [assistant] Let me try checking cookies...
-[user] That didn't work either
+[user] This is so frustrating, we've been going in circles!
 [assistant] I think the issue is in useEffect cleanup...
 [user] That fixed it, thanks!
 
@@ -347,7 +351,13 @@ Analyze this session using SEGMENT-FIRST approach:
 
    IMPORTANT: Other segment kinds NEVER have SUCCESS/FAILURE.
 
-3. Extract memories based on segment kind:
+3. Detect user frustration signals:
+   - Swear words, strong anger → importance: critical, user_frustration: severe
+   - Repeated complaints ("again", "still broken") → importance: high, user_frustration: moderate
+   - Mild frustration → importance: medium, user_frustration: mild
+   - No frustration → importance: medium, user_frustration: none
+
+4. Extract memories based on segment kind:
    - EXECUTION_TASK: lesson (with outcome), fact (knowledge discovered)
    - PLANNING_DECISION: fact (decisions), lesson (rationale), profile
    - RESEARCH_LEARNING: fact (knowledge), lesson (learnings)
@@ -598,6 +608,7 @@ CREATE TABLE user_profile (
 | Batching | Groups events into Episodes (4hr OR 50 events) |
 | **Segmentation** | Agent segments by kind: EXECUTION_TASK / PLANNING_DECISION / RESEARCH_LEARNING / DISCUSSION |
 | **Outcome** | For EXECUTION_TASK only: SUCCESS/FAILURE/UNCERTAIN (with evidence) |
+| **Frustration** | Detects anger/swearing → boosts importance (critical/high), stores user_frustration in metadata |
 | Extraction | Based on segment kind: lesson (with outcome), fact (with key/evidence_source), profile |
 | **Declarative Keys** | Facts with project.* or user.* keys enable deterministic conflict detection |
 | **Contradiction** | Same key + different value → old fact invalidated (no LLM); free-text → LLM judges |
@@ -636,6 +647,7 @@ Contradiction detection auto-invalidates old facts when new conflicting facts ar
 | **Segment-first** | Segment by kind before outcome classification | Not all sessions are tasks with outcomes |
 | **Segment kinds** | EXECUTION_TASK / PLANNING / RESEARCH / DISCUSSION | Different session types produce different memories |
 | **Outcome only for EXECUTION_TASK** | SUCCESS/FAILURE/UNCERTAIN with evidence | Avoid classifying discussions as "failures" |
+| **Frustration detection** | Anger/swearing → importance boost + metadata flag | High-pain failures get prioritized in retrieval |
 | Memory extraction | Based on segment kind | Architecture produces facts, coding produces lessons |
 | **Declarative keys** | project.* and user.* keys for facts | Deterministic conflict detection (no LLM) |
 | **Evidence source** | success/failure/neutral/manual on facts | Track how a fact was learned |
@@ -663,7 +675,7 @@ Contradiction detection auto-invalidates old facts when new conflicting facts ar
 
 | Type | Key Fields | Description | Example |
 |------|------------|-------------|---------|
-| `lesson` | outcome (success/failure/uncertain) | What worked or failed | "API 500 on null user_id", "Repository pattern works well" |
+| `lesson` | outcome, importance, user_frustration | What worked or failed | "API 500 on null user_id", "Repository pattern works well" |
 | `fact` | key, value, evidence_source | Project/user knowledge | key=project.db.engine, value=PostgreSQL |
 | `profile` | (structured identity) | User background info | name, role, experience_level |
 
@@ -689,6 +701,19 @@ How a fact was learned:
 - `failure` - Learned from failed task (valuable pitfall)
 - `neutral` - Observed in planning/research/discussion
 - `manual` - User explicitly stated via CLI
+
+### Frustration Detection (Lessons)
+
+User frustration signals boost memory importance:
+
+| Signal | Importance | user_frustration |
+|--------|------------|------------------|
+| Swear words, strong anger | `critical` | `severe` |
+| Repeated complaints ("again", "still") | `high` | `moderate` |
+| Mild frustration | `medium` | `mild` |
+| No frustration | `medium` | `none` |
+
+Stored in `metadata.user_frustration`. Frustration-flagged memories get priority in retrieval to prevent recurring pain points.
 
 ### Scope Matrix
 
