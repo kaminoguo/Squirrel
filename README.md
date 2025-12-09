@@ -213,8 +213,9 @@ Python Agent analyzes Episode (segment-first approach):
      - RESEARCH_LEARNING (learning, exploring)
      - DISCUSSION (brainstorming, chat)
   2. For EXECUTION_TASK only: SUCCESS | FAILURE | UNCERTAIN
-  3. Extracts memories based on segment kind
-  4. Checks for fact contradictions → invalidates old facts
+  3. Detects user frustration (swear words, anger) → boosts importance
+  4. Extracts memories based on segment kind
+  5. Checks for fact contradictions → invalidates old facts
         ↓
 Near-duplicate check (0.9 threshold) → store or merge
 ```
@@ -283,7 +284,7 @@ sqrl import memories.json           # Import memories
 
 | Type | Key Fields | Description | Example |
 |------|------------|-------------|---------|
-| `lesson` | outcome (success/failure/uncertain) | What worked or failed | "API 500 on null user_id", "Repository pattern works well" |
+| `lesson` | outcome, importance, user_frustration | What worked or failed | "API 500 on null user_id", "Repository pattern works well" |
 | `fact` | key, value, evidence_source | Project/user knowledge | key=project.db.engine, value=PostgreSQL |
 | `profile` | (structured identity) | User background info | name, role, experience_level |
 
@@ -323,14 +324,28 @@ How a fact was learned:
 - `neutral` - Observed in planning/research/discussion
 - `manual` - User explicitly stated via CLI
 
+### Frustration Detection
+
+User frustration signals boost memory importance:
+
+| Signal | Importance | Example |
+|--------|------------|---------|
+| Swear words, strong anger | `critical` | "this f***ing bug again" |
+| Repeated complaints | `high` | "still broken", "again" |
+| Mild frustration | `medium` | "this is annoying" |
+
+Stored in `metadata.user_frustration`: none | mild | moderate | severe
+
+Frustration-flagged memories get priority in retrieval to prevent recurring pain points.
+
 ### Examples by Type
 
 **lesson (outcome=success):** patterns that worked
 - "Repository pattern works well for DB access"
 - "Batch inserts 10x faster than individual"
 
-**lesson (outcome=failure):** issues to avoid
-- "API returns 500 on null user_id"
+**lesson (outcome=failure, user_frustration=severe):** critical issues to avoid
+- "API returns 500 on null user_id" (user was very angry)
 - "Never use ORM for bulk inserts"
 
 **fact (with key):** declarative project/user knowledge
@@ -450,7 +465,24 @@ Squirrel/
 
 ## Development Setup
 
-### Prerequisites
+### Option 1: Nix/devenv (Recommended)
+
+Single command setup with all tools:
+
+```bash
+# Install devenv: https://devenv.sh/getting-started/
+git clone https://github.com/kaminoguo/Squirrel.git
+cd Squirrel
+devenv shell
+
+# Available commands:
+test-all    # Run all tests
+dev-daemon  # Start daemon in dev mode
+fmt         # Format all code
+lint        # Lint all code
+```
+
+### Option 2: Manual Setup
 
 ```bash
 # Rust 1.83+
@@ -467,10 +499,10 @@ git clone https://github.com/kaminoguo/Squirrel.git
 cd Squirrel
 
 # Rust
-cd agent && cargo build && cargo test
+cd daemon && cargo build && cargo test
 
 # Python
-cd ../memory_service
+cd ../agent
 uv venv && uv pip install -e ".[dev]"
 source .venv/bin/activate && pytest
 ```
@@ -492,6 +524,7 @@ source .venv/bin/activate && pytest
 - Lazy daemon (start on demand, stop after 2hr idle)
 - Retroactive log ingestion on init (token-limited)
 - Near-duplicate deduplication (0.9 threshold)
+- Frustration detection (anger/swearing → boost importance, prioritize in retrieval)
 - Cross-platform (Mac, Linux, Windows)
 - Export/import memories (JSON)
 - Auto-update (`sqrl update`)

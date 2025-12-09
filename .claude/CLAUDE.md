@@ -1,73 +1,85 @@
-# Squirrel Project - Team Standards
+# Squirrel Project
 
-## Team Communication Guidelines
-1. DONT use unnecessary emojis that will affect our communication efficiency
-2. READMEs and comments are for AI, not for humans; they should be written in a manner that facilitates AI comprehension
-3. Always remain calm, do not seek quick success and instant benefits, and do not celebrate prematurely
-4. Do not pander to ideas. If proposed solutions or concepts are incorrect or difficult to implement, point them out
-5. Today is 2025 Nov23, if doing search tasks, search the latest
-6. Do not display code when discussing solutions; it is a waste of time
-7. All context in this project should be English, including commits, they should be brief English
+Local-first memory system for AI coding tools.
 
-## Git Workflow
+## Spec-Driven Development
 
-### Branch Naming Convention
-Format: `yourname/type-description`
+This project uses spec-driven development. **Specs are the source of truth.**
 
-Types:
-- `feat` - New feature
-- `fix` - Bug fix
-- `refactor` - Code refactoring
-- `docs` - Documentation
-- `test` - Test additions/changes
-- `chore` - Maintenance tasks
+| Spec File | Purpose |
+|-----------|---------|
+| specs/CONSTITUTION.md | Project governance, core principles |
+| specs/ARCHITECTURE.md | System boundaries, data flow |
+| specs/SCHEMAS.md | Database schemas (SCHEMA-*) |
+| specs/INTERFACES.md | IPC, MCP, CLI contracts (IPC-*, MCP-*, CLI-*) |
+| specs/KEYS.md | Declarative key registry (KEY-*) |
+| specs/PROMPTS.md | LLM prompts with model tiers (PROMPT-*) |
+| specs/DECISIONS.md | Architecture decision records (ADR-*) |
 
-Examples:
-- `lyrica/feat-add-authentication`
-- `alice/fix-memory-leak`
-- `bob/docs-update-api`
+**Rules:**
+1. Never implement behavior not defined in specs
+2. Update specs before or with code, never after
+3. Reference spec IDs in commits (e.g., "implements SCHEMA-001")
 
-### Commit Message Format
-Format: `type(scope): brief english description`
+## Project Rules
 
-Keep commits brief and in English.
+See `project-rules/*.mdc` for context-specific rules:
+- `general.mdc` - Overall development rules
+- `rust-daemon.mdc` - Rust daemon boundaries
+- `python-agent.mdc` - Python agent boundaries
+- `specs.mdc` - Specification maintenance
+- `testing.mdc` - Testing requirements
 
-Examples:
-- `feat(auth): add JWT validation`
-- `fix(api): handle null user`
-- `docs(readme): update setup`
+## Architecture
 
-### Pull Request Process
-1. Create branch from `main`
-2. Make changes and test
-3. Push branch
-4. Create PR on GitHub
-5. Get 1 approval from teammate
-6. Merge to main
+```
+Rust Daemon (I/O, storage, MCP) <--IPC--> Python Agent (LLM operations)
+```
 
-## Development Standards
+| Component | Responsibility |
+|-----------|----------------|
+| Rust Daemon | Log watching, MCP server, CLI, SQLite storage |
+| Python Agent | Memory extraction, context composition, conflict detection |
 
-### Code Quality
-- Write tests for new features
-- Run linter before commit
-- Keep files under 200 lines when possible
-- Use descriptive names
+See specs/ARCHITECTURE.md for details.
 
-### Security
-- Never commit secrets (.env, API keys)
-- Always validate user input
-- Review AI-generated code for security issues
+## Development Environment
 
-## Team Collaboration
+Uses Nix via devenv. Single command setup:
 
-All 3 team members are full-stack and can work on any part of the codebase.
+```bash
+devenv shell
+```
+
+Available commands:
+- `test-all` - Run all tests
+- `dev-daemon` - Start daemon in dev mode
+- `fmt` - Format all code
+- `lint` - Lint all code
+
+## Team Standards
 
 ### Communication
-- Announce what you're working on in issues/PR
-- If touching shared files, communicate with team
-- Sync frequently: `git pull origin main` daily
+- No unnecessary emojis
+- Documentation written for AI comprehension
+- English only in code, comments, commits
+- Brief, direct language
 
-### Conflict Prevention
-- Pull latest before starting work
-- Create focused branches for specific tasks
-- Communicate when working on same areas 
+### Git Workflow
+
+Branch: `yourname/type-description`
+- `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
+
+Commit: `type(scope): brief description`
+- Reference spec IDs when applicable
+
+### Code Quality
+- Write tests for new features (DR4)
+- Keep files under 200 lines
+- Only change what's necessary (DR5)
+- No drive-by refactoring
+
+### Security
+- Never commit secrets
+- Validate user input
+- Review AI-generated code

@@ -1,0 +1,55 @@
+---
+description: Rules for Rust daemon development
+globs: ["daemon/**/*.rs", "Cargo.toml", "Cargo.lock"]
+---
+
+# Rust Daemon Rules
+
+## Architecture Boundary (ARCH-001)
+
+The Rust daemon handles ALL local I/O and NEVER contains LLM logic.
+
+Daemon responsibilities:
+- File watching (notify crate)
+- MCP server (rmcp crate)
+- CLI commands (clap crate)
+- SQLite storage (rusqlite + sqlite-vec)
+- IPC routing (tokio, JSON-RPC 2.0)
+
+Daemon NEVER:
+- Makes LLM API calls
+- Extracts memories
+- Computes semantic similarity (sqlite-vec does this)
+
+## Key Crates
+
+| Purpose | Crate |
+|---------|-------|
+| Async runtime | tokio |
+| File watching | notify |
+| MCP server | rmcp |
+| CLI parsing | clap |
+| SQLite | rusqlite |
+| Vector search | sqlite-vec |
+| Serialization | serde, serde_json |
+
+## IPC Protocol
+
+Unix socket at `/tmp/sqrl_agent.sock` (Windows: named pipe).
+JSON-RPC 2.0 format. See specs/INTERFACES.md for all methods.
+
+## Error Handling
+
+Use thiserror for error types. Map to JSON-RPC error codes:
+- -32001: Episode empty
+- -32002: Invalid repo
+- -32010: Project not initialized
+- -32020: Unknown command
+
+## Platform Support
+
+Must compile on macOS, Linux, Windows. No OS-specific hacks.
+Use conditional compilation sparingly:
+```rust
+#[cfg(target_os = "windows")]
+```

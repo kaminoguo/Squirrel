@@ -1,0 +1,40 @@
+---
+description: General project rules for all Squirrel development
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Squirrel Development Rules
+
+## Spec-Driven Development
+
+This project uses spec-driven development. Specs in `specs/` are the source of truth.
+
+1. Never implement behavior not defined in specs
+2. Update specs before or with code, never after
+3. Reference spec IDs in commits and PRs (e.g., "implements SCHEMA-001")
+
+## Code Changes
+
+1. Only change what's necessary - no drive-by refactoring
+2. Keep files under 200 lines when possible
+3. No "while I'm here" improvements
+4. Don't add features beyond what was asked
+
+## Communication Style
+
+1. English only in code, comments, commits, specs
+2. No emojis in documentation
+3. Brief, direct language
+4. Tables over paragraphs
+
+## Git Workflow
+
+Branch naming: `yourname/type-description`
+- `feat` - New feature
+- `fix` - Bug fix
+- `refactor` - Code refactoring
+- `docs` - Documentation
+- `test` - Test additions
+
+Commit format: `type(scope): brief description`
