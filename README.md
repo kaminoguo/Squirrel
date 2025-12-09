@@ -281,11 +281,11 @@ sqrl import memories.json           # Import memories
 
 3 memory types, each with scope (global/project):
 
-| Type | Fields | Description | Example |
-|------|--------|-------------|---------|
-| `lesson` | outcome (success/failure), scope | What worked or failed | "async/await preferred", "API 500 on null user_id" |
-| `fact` | fact_type (knowledge/process), scope | Project knowledge or what happened | "Uses PostgreSQL 15", "Tried X, then Y worked" |
-| `profile` | scope | User info | "Backend dev, 5yr Python" |
+| Type | Key Fields | Description | Example |
+|------|------------|-------------|---------|
+| `lesson` | outcome (success/failure/uncertain) | What worked or failed | "API 500 on null user_id", "Repository pattern works well" |
+| `fact` | key, value, evidence_source | Project/user knowledge | key=project.db.engine, value=PostgreSQL |
+| `profile` | (structured identity) | User background info | name, role, experience_level |
 
 ### Scope
 
@@ -294,27 +294,55 @@ sqrl import memories.json           # Import memories
 | Global | `~/.sqrl/squirrel.db` | User preferences, profile (applies to all projects) |
 | Project | `<repo>/.sqrl/squirrel.db` | Project-specific lessons and facts |
 
+### Declarative Keys (Facts)
+
+Critical facts use declarative keys for deterministic conflict detection:
+
+**Project-scoped keys:**
+```
+project.db.engine         # PostgreSQL, MySQL, SQLite
+project.api.framework     # FastAPI, Express, Rails
+project.language.main     # Python, TypeScript, Go
+project.auth.method       # JWT, session, OAuth
+```
+
+**User-scoped keys (global):**
+```
+user.preferred_style      # async_await, callbacks, sync
+user.preferred_language   # Python, TypeScript, Go
+user.comment_style        # minimal, detailed, jsdoc
+```
+
+Same key + different value → old fact automatically invalidated (no LLM needed).
+
+### Evidence Source (Facts)
+
+How a fact was learned:
+- `success` - Learned from successful task (high confidence)
+- `failure` - Learned from failed task (valuable pitfall)
+- `neutral` - Observed in planning/research/discussion
+- `manual` - User explicitly stated via CLI
+
 ### Examples by Type
 
-**lesson (outcome=success):** coding preferences, patterns that worked
-- "Prefers async/await over callbacks"
-- "Use repository pattern for DB access"
+**lesson (outcome=success):** patterns that worked
+- "Repository pattern works well for DB access"
+- "Batch inserts 10x faster than individual"
 
-**lesson (outcome=failure):** issues encountered, things to avoid
+**lesson (outcome=failure):** issues to avoid
 - "API returns 500 on null user_id"
 - "Never use ORM for bulk inserts"
 
-**fact (fact_type=knowledge):** project facts, tech stack info
-- "Uses PostgreSQL 15"
-- "Auth via JWT tokens"
+**fact (with key):** declarative project/user knowledge
+- key=project.db.engine, value=PostgreSQL, text="Uses PostgreSQL 15 via Prisma"
+- key=user.preferred_style, value=async_await, text="Prefers async/await over callbacks"
 
-**fact (fact_type=process):** what happened, decision history
+**fact (free-text):** process history, decisions
 - "Tried Redis, failed due to memory, switched to PostgreSQL"
-- "Sprint 12: migrated to Redis"
+- "Auth module handles JWT validation in middleware"
 
-**profile:** user info
-- "Backend dev, 5yr Python experience"
-- "Prefers detailed code comments"
+**profile:** structured user identity
+- name, role, experience_level, company, primary_use_case
 
 ### Memory Lifecycle
 
@@ -452,15 +480,17 @@ source .venv/bin/activate && pytest
 - Passive log watching (4 CLIs)
 - Episode segmentation (EXECUTION_TASK / PLANNING_DECISION / RESEARCH_LEARNING / DISCUSSION)
 - Success detection for EXECUTION_TASK only (with evidence requirement)
+- 3 memory types (lesson, fact, profile) with scope flag
+- Declarative keys for facts (project.* and user.*) with deterministic conflict detection
+- Evidence source tracking for facts (success/failure/neutral/manual)
 - Memory lifecycle: status (active/inactive/invalidated) + validity tracking
-- Fact contradiction detection + auto-invalidation
+- Fact contradiction detection (declarative key match + LLM for free-text)
 - Soft delete (`sqrl forget`) - recoverable
 - Unified Python agent with tools
 - Natural language CLI
 - MCP integration (2 tools)
 - Lazy daemon (start on demand, stop after 2hr idle)
 - Retroactive log ingestion on init (token-limited)
-- 3 memory types (lesson, fact, profile) with scope flag
 - Near-duplicate deduplication (0.9 threshold)
 - Cross-platform (Mac, Linux, Windows)
 - Export/import memories (JSON)

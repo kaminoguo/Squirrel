@@ -134,19 +134,40 @@ Not all sessions are coding tasks with success/failure outcomes. Sessions includ
   ],
   "memories": [
     {
-      "memory_type": "FACT",
-      "scope": "PROJECT",
-      "content": "Project uses PostgreSQL 15 via Prisma.",
+      "memory_type": "fact",
+      "scope": "project",
+      "key": "project.db.engine",
+      "value": "PostgreSQL",
+      "text": "Project uses PostgreSQL 15 via Prisma.",
+      "evidence_source": "neutral",
       "source_segments": ["seg_1"],
       "confidence": 0.86
     },
     {
-      "memory_type": "LESSON",
-      "scope": "PROJECT",
+      "memory_type": "fact",
+      "scope": "global",
+      "key": "user.preferred_style",
+      "value": "async_await",
+      "text": "User prefers async/await over callbacks.",
+      "evidence_source": "success",
+      "source_segments": ["seg_1"],
+      "confidence": 0.85
+    },
+    {
+      "memory_type": "lesson",
+      "scope": "project",
       "outcome": "failure",
-      "content": "Validate user_id before DB insert to avoid 500s.",
+      "text": "Validate user_id before DB insert to avoid 500s.",
       "source_segments": ["seg_1"],
       "confidence": 0.9
+    },
+    {
+      "memory_type": "fact",
+      "scope": "project",
+      "text": "Auth module handles JWT validation in middleware.",
+      "evidence_source": "neutral",
+      "source_segments": ["seg_1"],
+      "confidence": 0.75
     }
   ]
 }
@@ -252,21 +273,36 @@ SQLite + sqlite-vec initialization:
 -- memories table (squirrel.db)
 CREATE TABLE memories (
   id TEXT PRIMARY KEY,
-  content_hash TEXT NOT NULL UNIQUE,
-  content TEXT NOT NULL,
+  project_id TEXT,                  -- NULL for global/user-scope memories
   memory_type TEXT NOT NULL,        -- lesson | fact | profile
-  outcome TEXT,                     -- success | failure (for lesson type)
-  fact_type TEXT,                   -- knowledge | process (for fact type)
-  scope TEXT NOT NULL,              -- global | project
-  repo TEXT NOT NULL,               -- repo path OR 'global'
+
+  -- For lessons (task-level patterns/pitfalls)
+  outcome TEXT,                     -- success | failure | uncertain (lesson only)
+
+  -- For facts
+  fact_type TEXT,                   -- knowledge | process (fact only, optional)
+  key TEXT,                         -- declarative key: project.db.engine, user.preferred_style
+  value TEXT,                       -- declarative value: PostgreSQL, async_await
+  evidence_source TEXT,             -- success | failure | neutral | manual (fact only)
+  support_count INTEGER,            -- approx episodes that support this fact
+  last_seen_at TEXT,                -- last episode where this was seen
+
+  -- Content
+  text TEXT NOT NULL,               -- human-readable content
   embedding BLOB,                   -- 1536-dim float32 (text-embedding-3-small)
+  metadata TEXT,                    -- JSON: anchors (files, components, endpoints)
+
+  -- Confidence
   confidence REAL NOT NULL,
   importance TEXT NOT NULL DEFAULT 'medium',  -- critical | high | medium | low
+
+  -- Lifecycle
   status TEXT NOT NULL DEFAULT 'active',      -- active | inactive | invalidated
-  valid_from TEXT NOT NULL,                   -- when this became true
-  valid_to TEXT,                              -- when it stopped being true (null = still valid)
-  superseded_by TEXT,                         -- memory_id that replaced this (for invalidated)
-  semantic_key TEXT,                          -- for fact contradiction detection (e.g., db.engine)
+  valid_from TEXT NOT NULL,
+  valid_to TEXT,
+  superseded_by TEXT,
+
+  -- Audit
   user_id TEXT NOT NULL DEFAULT 'local',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -316,14 +352,47 @@ CREATE TABLE memory_access_log (
 );
 ```
 
-### A1.1 Memory Lifecycle (Forget Mechanism)
+### A1.1 Declarative Key Registry
+
+Declarative keys are the "rigid backbone" for critical facts. Same key + different value triggers deterministic invalidation (no LLM needed).
+
+**Project-scoped keys** (project_id set):
+```
+project.db.engine          # PostgreSQL, MySQL, SQLite
+project.db.version         # 15, 8.0, 3.x
+project.api.framework      # FastAPI, Express, Rails
+project.ui.framework       # React, Vue, Svelte
+project.language.main      # Python, TypeScript, Go
+project.test.command       # pytest, npm test, go test
+project.build.command      # npm run build, cargo build
+project.auth.method        # JWT, session, OAuth
+project.package_manager    # npm, pnpm, yarn, pip, uv
+project.orm                # Prisma, SQLAlchemy, TypeORM
+```
+
+**User-scoped keys** (project_id = NULL, stored in global db):
+```
+user.preferred_style       # async_await, callbacks, sync
+user.preferred_language    # Python, TypeScript, Go
+user.strict_null_checks    # true, false
+user.comment_style         # minimal, detailed, jsdoc
+user.error_handling        # exceptions, result_types, errors
+```
+
+**Key behaviors:**
+- Keys are optional - most facts remain free-text
+- LLM extracts key during ingestion when pattern matches registry
+- Same key + different value → deterministic invalidation of old fact
+- Keys enable fast lookup without vector search
+
+### A1.2 Memory Lifecycle (Forget Mechanism)
 
 **Status values:**
 - `active` - Normal, appears in retrieval
 - `inactive` - Soft deleted by user (`sqrl forget`), recoverable, hidden from retrieval
 - `invalidated` - Superseded by newer fact, keeps history, hidden from retrieval
 
-**Validity fields (for fact/profile):**
+**Validity fields (for facts):**
 - `valid_from` - When this became true (default: created_at)
 - `valid_to` - When it stopped being true (null = still valid)
 - `superseded_by` - ID of memory that replaced this
@@ -336,15 +405,12 @@ WHERE status = 'active'
 
 **Contradiction detection (during ingestion):**
 
-For facts with `semantic_key`:
-```
-semantic_key examples: db.engine, db.version, api.framework,
-                       auth.method, package_manager, orm
-```
+For facts with declarative `key`:
 - Same key + different value → invalidate old (status='invalidated', valid_to=now, superseded_by=new_id)
-- LLM extracts semantic_key when possible during ingestion
+- Deterministic, no LLM needed
+- Example: key=project.db.engine, old value=MySQL, new value=PostgreSQL → invalidate old
 
-For free-text facts without clear key:
+For free-text facts without key:
 - LLM judges semantic conflict between new fact and similar existing facts
 - High confidence conflict → invalidate old
 - Low confidence → keep both, let retrieval handle via recency weighting
@@ -547,25 +613,33 @@ UUID→integer mapping when showing existing memories to LLM (prevents hallucina
 
 ### C4. Schemas (`schemas/`)
 
-Memory schema:
-- id, content_hash, content, memory_type, repo, embedding
-- outcome (for lesson), fact_type (for fact), scope
-- confidence, importance, user_id
-- created_at, updated_at
-- memory_type: lesson | fact | profile
-- outcome (lesson only): success | failure
-- fact_type (fact only): knowledge | process
-- scope: global | project
+**Memory schema:**
+- id, project_id (NULL for global), memory_type (lesson | fact | profile)
+- text (human-readable content), embedding (1536-dim)
+- metadata (JSON: anchors - files, components, endpoints)
+- confidence, importance (critical | high | medium | low)
+- user_id, created_at, updated_at
 
-Lifecycle fields:
+**Lesson-specific fields:**
+- outcome: success | failure | uncertain
+
+**Fact-specific fields:**
+- fact_type: knowledge | process (optional)
+- key: declarative key (project.db.engine, user.preferred_style, etc.)
+- value: declarative value (PostgreSQL, async_await, etc.)
+- evidence_source: success | failure | neutral | manual
+- support_count: number of episodes that support this fact
+- last_seen_at: timestamp of last episode where seen
+
+**Lifecycle fields (all types):**
 - status: active | inactive | invalidated
 - valid_from: timestamp (when this became true)
 - valid_to: timestamp | null (when it stopped being true)
 - superseded_by: memory_id | null (for invalidated facts)
-- semantic_key: string | null (for fact contradiction detection)
 
-UserProfile schema:
+**UserProfile schema (structured identity, not memories):**
 - key, value, source (explicit|inferred), confidence, updated_at
+- Examples: name, role, experience_level, company, primary_use_case
 
 ---
 
@@ -585,6 +659,31 @@ UserProfile schema:
    - Merges related memories
    - Generates structured prompt with memory IDs
 3. Returns ready-to-inject context prompt within token budget
+
+**Context output structure:**
+```json
+{
+  "project_facts": [
+    {"key": "project.db.engine", "value": "PostgreSQL", "text": "..."},
+    {"key": "project.api.framework", "value": "FastAPI", "text": "..."}
+  ],
+  "user_prefs": [
+    {"key": "user.preferred_style", "value": "async_await", "text": "..."}
+  ],
+  "lessons": [
+    {"outcome": "failure", "text": "Validate user_id before DB insert...", "id": "mem_123"},
+    {"outcome": "success", "text": "Use repository pattern for DB access...", "id": "mem_456"}
+  ],
+  "process_facts": [
+    {"text": "Auth module handles JWT validation in middleware.", "id": "mem_789"}
+  ],
+  "profile": {
+    "name": "Alice",
+    "role": "Backend Developer",
+    "experience_level": "Senior"
+  }
+}
+```
 
 **forget_memory(id_or_query):**
 - If ID: set status='inactive' (soft delete, recoverable)
@@ -833,8 +932,10 @@ Windows note: MSI recommended over raw .exe to reduce SmartScreen/AV friction.
 - Lazy daemon (start on demand, stop after 2hr idle)
 - Retroactive log ingestion on init (token-limited)
 - 3 memory types (lesson, fact, profile) with scope flag
+- Declarative keys for facts (project.* and user.*) with deterministic conflict detection
+- Evidence source tracking for facts (success/failure/neutral/manual)
 - Memory lifecycle: status (active/inactive/invalidated) + validity (valid_from/valid_to)
-- Fact contradiction detection (semantic_key + LLM for free-text)
+- Fact contradiction detection (declarative key match + LLM for free-text)
 - Soft delete (`sqrl forget`) - no hard purge
 - Near-duplicate deduplication (0.9 threshold)
 - Cross-platform (Mac, Linux, Windows)

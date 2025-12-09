@@ -278,10 +278,12 @@ async def ingest_episode(episode: dict) -> dict:
         ],
         "memories": [
             {
-                "memory_type": "lesson",
-                "outcome": "success",
+                "memory_type": "fact",
                 "scope": "global",
-                "content": "Prefers async/await with type hints for all handlers",
+                "key": "user.preferred_style",
+                "value": "async_await",
+                "text": "Prefers async/await with type hints for all handlers",
+                "evidence_source": "success",
                 "source_segments": ["seg_1"],
                 "confidence": 0.9
             },
@@ -289,7 +291,7 @@ async def ingest_episode(episode: dict) -> dict:
                 "memory_type": "lesson",
                 "outcome": "failure",
                 "scope": "project",
-                "content": "Auth token refresh loops are NOT caused by localStorage or cookies - check useEffect cleanup first",
+                "text": "Auth token refresh loops are NOT caused by localStorage or cookies - check useEffect cleanup first",
                 "source_segments": ["seg_2"],
                 "confidence": 0.9
             },
@@ -297,15 +299,15 @@ async def ingest_episode(episode: dict) -> dict:
                 "memory_type": "lesson",
                 "outcome": "success",
                 "scope": "project",
-                "content": "For auth redirect loops, fix useEffect cleanup to prevent re-triggering on token refresh",
+                "text": "For auth redirect loops, fix useEffect cleanup to prevent re-triggering on token refresh",
                 "source_segments": ["seg_2"],
                 "confidence": 0.9
             },
             {
                 "memory_type": "fact",
-                "fact_type": "process",
                 "scope": "project",
-                "content": "Tried localStorage fix (failed), tried cookies fix (failed), useEffect cleanup fix worked",
+                "text": "Tried localStorage fix (failed), tried cookies fix (failed), useEffect cleanup fix worked",
+                "evidence_source": "neutral",
                 "source_segments": ["seg_2"],
                 "confidence": 0.85
             }
@@ -518,22 +520,36 @@ CREATE TABLE events (
 ```sql
 CREATE TABLE memories (
     id TEXT PRIMARY KEY,
-    content_hash TEXT NOT NULL UNIQUE,
-    content TEXT NOT NULL,
-    memory_type TEXT NOT NULL,        -- lesson | fact | profile
-    outcome TEXT,                     -- success | failure (for lesson type)
-    fact_type TEXT,                   -- knowledge | process (for fact type)
-    scope TEXT NOT NULL,              -- global | project
-    repo TEXT NOT NULL,               -- repo path OR 'global'
-    embedding BLOB,                   -- 1536-dim float32 (text-embedding-3-small)
+    project_id TEXT,                          -- NULL for global/user-scope memories
+    memory_type TEXT NOT NULL,                -- lesson | fact | profile
+
+    -- For lessons (task-level patterns/pitfalls)
+    outcome TEXT,                             -- success | failure | uncertain (lesson only)
+
+    -- For facts
+    fact_type TEXT,                           -- knowledge | process (optional)
+    key TEXT,                                 -- declarative key: project.db.engine, user.preferred_style
+    value TEXT,                               -- declarative value: PostgreSQL, async_await
+    evidence_source TEXT,                     -- success | failure | neutral | manual (fact only)
+    support_count INTEGER,                    -- approx episodes that support this fact
+    last_seen_at TEXT,                        -- last episode where this was seen
+
+    -- Content
+    text TEXT NOT NULL,                       -- human-readable content
+    embedding BLOB,                           -- 1536-dim float32 (text-embedding-3-small)
+    metadata TEXT,                            -- JSON: anchors (files, components, endpoints)
+
+    -- Confidence
     confidence REAL NOT NULL,
     importance TEXT NOT NULL DEFAULT 'medium',  -- critical | high | medium | low
-    -- Lifecycle fields
+
+    -- Lifecycle
     status TEXT NOT NULL DEFAULT 'active',      -- active | inactive | invalidated
-    valid_from TEXT NOT NULL,                   -- when this became true
-    valid_to TEXT,                              -- when it stopped being true
-    superseded_by TEXT,                         -- memory_id that replaced this
-    semantic_key TEXT,                          -- for fact contradiction (e.g., db.engine)
+    valid_from TEXT NOT NULL,
+    valid_to TEXT,
+    superseded_by TEXT,
+
+    -- Audit
     user_id TEXT NOT NULL DEFAULT 'local',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -545,15 +561,27 @@ CREATE TABLE memories (
 - `inactive` - Soft deleted via `sqrl forget`, hidden but recoverable
 - `invalidated` - Superseded by newer fact, hidden but keeps history
 
-### User Profile (separate from memories)
+**Declarative key examples:**
+- `project.db.engine` → PostgreSQL, MySQL, SQLite
+- `project.api.framework` → FastAPI, Express, Rails
+- `user.preferred_style` → async_await, callbacks, sync
+- `user.comment_style` → minimal, detailed, jsdoc
+
+Same key + different value → deterministic invalidation of old fact.
+
+### User Profile (structured identity)
 
 ```sql
 CREATE TABLE user_profile (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,       -- JSON value
+    user_id TEXT PRIMARY KEY,
+    name TEXT,
+    role TEXT,
+    experience_level TEXT,
+    company TEXT,
+    primary_use_case TEXT,
+    created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
--- Keys: name, role, preferred_languages, common_frameworks, etc.
 ```
 
 ---
@@ -570,8 +598,9 @@ CREATE TABLE user_profile (
 | Batching | Groups events into Episodes (4hr OR 50 events) |
 | **Segmentation** | Agent segments by kind: EXECUTION_TASK / PLANNING_DECISION / RESEARCH_LEARNING / DISCUSSION |
 | **Outcome** | For EXECUTION_TASK only: SUCCESS/FAILURE/UNCERTAIN (with evidence) |
-| Extraction | Based on segment kind: lesson, fact, profile |
-| **Contradiction** | New fact conflicts with old → old marked `invalidated` |
+| Extraction | Based on segment kind: lesson (with outcome), fact (with key/evidence_source), profile |
+| **Declarative Keys** | Facts with project.* or user.* keys enable deterministic conflict detection |
+| **Contradiction** | Same key + different value → old fact invalidated (no LLM); free-text → LLM judges |
 | Dedup | Near-duplicate check (0.9 similarity) before ADD |
 | Retrieval | MCP → Vector search (top 20) → LLM reranks + composes context prompt |
 | Forget | `sqrl forget` → soft delete (status=inactive), recoverable |
@@ -608,14 +637,15 @@ Contradiction detection auto-invalidates old facts when new conflicting facts ar
 | **Segment kinds** | EXECUTION_TASK / PLANNING / RESEARCH / DISCUSSION | Different session types produce different memories |
 | **Outcome only for EXECUTION_TASK** | SUCCESS/FAILURE/UNCERTAIN with evidence | Avoid classifying discussions as "failures" |
 | Memory extraction | Based on segment kind | Architecture produces facts, coding produces lessons |
-| **Fact memory** | Always recorded | Audit trail, exportable for sharing |
+| **Declarative keys** | project.* and user.* keys for facts | Deterministic conflict detection (no LLM) |
+| **Evidence source** | success/failure/neutral/manual on facts | Track how a fact was learned |
 | **Memory lifecycle** | status (active/inactive/invalidated) + validity | Soft delete + contradiction handling |
-| **Fact contradiction** | semantic_key + LLM for free-text | Auto-invalidate old when new conflicts |
+| **Fact contradiction** | Declarative key match + LLM for free-text | Auto-invalidate old when new conflicts |
 | **Soft delete only (v1)** | `sqrl forget` → status=inactive | Recoverable, no hard purge until v2 |
 | **Context compose** | LLM reranks + generates prompt (fast_model) | Better than math scoring, one call |
 | **Natural language CLI** | Thin shell passes to agent | "By the way" - agent handles all |
 | **Retroactive ingestion** | Token-limited, not time-limited | Fair for all project sizes |
-| User profile | Separate table from user_style | Structured vs unstructured |
+| User profile | Separate table (structured identity) | name, role, experience_level - not learned |
 | **2-layer DB** | Global (squirrel.db) + Project (squirrel.db) | Scope-based separation |
 | **CLI selection** | User picks CLIs in `sqrl config` | Only configure what user actually uses |
 | **Agent instruction injection** | Add Squirrel block to CLAUDE.md, AGENTS.md, etc. | Increase MCP call success rate |
@@ -631,11 +661,34 @@ Contradiction detection auto-invalidates old facts when new conflicting facts ar
 
 3 memory types with scope flag:
 
-| Type | Fields | Description | Example |
-|------|--------|-------------|---------|
-| `lesson` | outcome (success/failure), scope | What worked or failed | "async/await preferred", "API 500 on null user_id" |
-| `fact` | fact_type (knowledge/process), scope | Project knowledge or what happened | "Uses PostgreSQL 15", "Tried X, then Y worked" |
-| `profile` | scope | User info | "Backend dev, 5yr Python" |
+| Type | Key Fields | Description | Example |
+|------|------------|-------------|---------|
+| `lesson` | outcome (success/failure/uncertain) | What worked or failed | "API 500 on null user_id", "Repository pattern works well" |
+| `fact` | key, value, evidence_source | Project/user knowledge | key=project.db.engine, value=PostgreSQL |
+| `profile` | (structured identity) | User background info | name, role, experience_level |
+
+### Declarative Keys
+
+Critical facts use declarative keys for deterministic conflict detection:
+
+**Project-scoped keys:**
+- `project.db.engine` - PostgreSQL, MySQL, SQLite
+- `project.api.framework` - FastAPI, Express, Rails
+- `project.language.main` - Python, TypeScript, Go
+- `project.auth.method` - JWT, session, OAuth
+
+**User-scoped keys (global):**
+- `user.preferred_style` - async_await, callbacks, sync
+- `user.preferred_language` - Python, TypeScript, Go
+- `user.comment_style` - minimal, detailed, jsdoc
+
+### Evidence Source (Facts Only)
+
+How a fact was learned:
+- `success` - Learned from successful task (high confidence)
+- `failure` - Learned from failed task (valuable pitfall)
+- `neutral` - Observed in planning/research/discussion
+- `manual` - User explicitly stated via CLI
 
 ### Scope Matrix
 
