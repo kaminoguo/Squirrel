@@ -2,6 +2,12 @@
 agent.md
 docs/internal/
 
+# MCP config (contains API keys)
+.mcp.json
+
+# Windows Zone.Identifier metadata
+*:Zone.Identifier
+
 # Environment variables
 .env
 .env.local

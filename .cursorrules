@@ -1,73 +1,86 @@
-# Squirrel Project - Team Standards
+# Squirrel Project
 
-## Team Communication Guidelines
-1. DONT use unnecessary emojis that will affect our communication efficiency
-2. READMEs and comments are for AI, not for humans; they should be written in a manner that facilitates AI comprehension
-3. Always remain calm, do not seek quick success and instant benefits, and do not celebrate prematurely
-4. Do not pander to ideas. If proposed solutions or concepts are incorrect or difficult to implement, point them out
-5. Today is 2025 Nov23, if doing search tasks, search the latest
-6. Do not display code when discussing solutions; it is a waste of time
-7. All context in this project should be English, including commits, they should be brief English
+Local-first memory system for AI coding tools.
 
-## Git Workflow
+## AI-First Development
 
-### Branch Naming Convention
-Format: `yourname/type-description`
+**This project is 98% AI-coded.** You are the primary developer.
 
-Types:
-- `feat` - New feature
-- `fix` - Bug fix
-- `refactor` - Code refactoring
-- `docs` - Documentation
-- `test` - Test additions/changes
-- `chore` - Maintenance tasks
+All documentation, specs, and structures are designed for AI comprehension. Use declarative thinking: specs define WHAT, you implement HOW.
 
-Examples:
-- `lyrica/feat-add-authentication`
-- `alice/fix-memory-leak`
-- `bob/docs-update-api`
+| Principle | Meaning |
+|-----------|---------|
+| Specs are source of truth | Never implement undefined behavior |
+| Declarative over imperative | Define outcomes, not steps |
+| Tables over prose | Structured data > paragraphs |
+| Stable IDs everywhere | SCHEMA-001, IPC-001, ADR-001 |
+| Update specs first | Specs change before code changes |
 
-### Commit Message Format
-Format: `type(scope): brief english description`
+## Spec-Driven Development
 
-Keep commits brief and in English.
+**Specs are the source of truth. Code is compiled output.**
 
-Examples:
-- `feat(auth): add JWT validation`
-- `fix(api): handle null user`
-- `docs(readme): update setup`
+| Spec File | Purpose |
+|-----------|---------|
+| specs/CONSTITUTION.md | Project governance, core principles |
+| specs/ARCHITECTURE.md | System boundaries, data flow |
+| specs/SCHEMAS.md | Database schemas (SCHEMA-*) |
+| specs/INTERFACES.md | IPC, MCP, CLI contracts (IPC-*, MCP-*, CLI-*) |
+| specs/KEYS.md | Declarative key registry (KEY-*) |
+| specs/PROMPTS.md | LLM prompts with model tiers (PROMPT-*) |
+| specs/DECISIONS.md | Architecture decision records (ADR-*) |
 
-### Pull Request Process
-1. Create branch from `main`
-2. Make changes and test
-3. Push branch
-4. Create PR on GitHub
-5. Get 1 approval from teammate
-6. Merge to main
+**Rules:**
+1. Read specs before implementing
+2. Never implement behavior not defined in specs
+3. Update specs before or with code, never after
+4. Reference spec IDs in commits (e.g., "implements SCHEMA-001")
 
-## Development Standards
+## Project Rules
 
-### Code Quality
-- Write tests for new features
-- Run linter before commit
-- Keep files under 200 lines when possible
-- Use descriptive names
+See `project-rules/*.mdc` for context-specific rules:
+- `general.mdc` - Overall development rules
+- `rust-daemon.mdc` - Rust daemon boundaries (ARCH-001)
+- `python-agent.mdc` - Python agent boundaries (ARCH-002)
+- `specs.mdc` - Specification maintenance
+- `testing.mdc` - Testing requirements (DR4)
 
-### Security
-- Never commit secrets (.env, API keys)
-- Always validate user input
-- Review AI-generated code for security issues
+## Architecture
 
-## Team Collaboration
+```
+Rust Daemon (I/O, storage, MCP) <--IPC--> Python Agent (LLM operations)
+```
 
-All 3 team members are full-stack and can work on any part of the codebase.
+| Component | Responsibility | Never Does |
+|-----------|----------------|------------|
+| Rust Daemon | Log watching, MCP server, CLI, SQLite | LLM calls |
+| Python Agent | Memory extraction, context composition | File watching |
+
+## Development Environment
+
+Uses Nix via devenv (ADR-006). Single command:
+
+```bash
+devenv shell
+```
+
+## Team Standards
 
 ### Communication
-- Announce what you're working on in issues/PR
-- If touching shared files, communicate with team
-- Sync frequently: `git pull origin main` daily
+- No unnecessary emojis
+- English only in code, comments, commits
+- Brief, direct language
+- Today's date: 2025 Dec 9
 
-### Conflict Prevention
-- Pull latest before starting work
-- Create focused branches for specific tasks
-- Communicate when working on same areas
+### Git Workflow
+
+Branch: `yourname/type-description`
+
+Commit: `type(scope): brief description`
+- Reference spec IDs when applicable
+
+### Code Quality
+- Write tests for new features (DR4)
+- Keep files under 200 lines
+- Only change what's necessary (DR5)
+- No drive-by refactoring

@@ -602,12 +602,19 @@ LLM analyzes entire Episode in ONE call (segment-first approach):
    - RESEARCH_LEARNING → fact (knowledge), lesson (key learnings)
    - DISCUSSION → profile (user preferences), lesson (insights)
 
-4. **Contradiction check for facts:**
+4. **Detect user frustration signals** and boost importance:
+   - Swear words, angry language → `importance: critical`
+   - Repeated complaints ("again", "still broken") → `importance: high`
+   - Mild frustration → `importance: medium` (default)
+   - Add `metadata.user_frustration`: none | mild | moderate | severe
+   - Frustration signals make associated failure lessons higher priority in retrieval
+
+5. **Contradiction check for facts:**
    - Extract semantic_key if possible (db.engine, api.framework, etc.)
    - Check existing facts with same key → invalidate old if conflict
    - Free-text facts → LLM judges semantic conflict
 
-5. **Near-duplicate check** before ADD (0.9 similarity threshold)
+6. **Near-duplicate check** before ADD (0.9 similarity threshold)
 
 UUID→integer mapping when showing existing memories to LLM (prevents hallucination).
 
@@ -793,8 +800,11 @@ Supports multiple providers via config. Batch embedding with retry logic.
 
 Similarity search via sqlite-vec.
 
-Scoring: `w_sim * similarity + w_imp * importance_weight + w_rec * recency`
+Scoring: `w_sim * similarity + w_imp * importance_weight + w_rec * recency + w_frust * frustration_boost`
 - importance_weight: critical=1.0, high=0.75, medium=0.5, low=0.25
+- frustration_boost: severe=0.3, moderate=0.2, mild=0.1, none=0.0
+
+Frustration-flagged memories surface earlier to prevent recurring pain points.
 
 Access logging to memory_access_log table.
 
@@ -938,6 +948,7 @@ Windows note: MSI recommended over raw .exe to reduce SmartScreen/AV friction.
 - Fact contradiction detection (declarative key match + LLM for free-text)
 - Soft delete (`sqrl forget`) - no hard purge
 - Near-duplicate deduplication (0.9 threshold)
+- Frustration detection (swear words, anger → boost importance, prioritize in retrieval)
 - Cross-platform (Mac, Linux, Windows)
 - Export/import memories (JSON)
 - Auto-update (`sqrl update`)

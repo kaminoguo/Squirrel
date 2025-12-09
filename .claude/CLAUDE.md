@@ -2,9 +2,23 @@
 
 Local-first memory system for AI coding tools.
 
+## AI-First Development
+
+**This project is 98% AI-coded.** You are the primary developer.
+
+All documentation, specs, and structures are designed for AI comprehension. Use declarative thinking: specs define WHAT, you implement HOW.
+
+| Principle | Meaning |
+|-----------|---------|
+| Specs are source of truth | Never implement undefined behavior |
+| Declarative over imperative | Define outcomes, not steps |
+| Tables over prose | Structured data > paragraphs |
+| Stable IDs everywhere | SCHEMA-001, IPC-001, ADR-001 |
+| Update specs first | Specs change before code changes |
+
 ## Spec-Driven Development
 
-This project uses spec-driven development. **Specs are the source of truth.**
+**Specs are the source of truth. Code is compiled output.**
 
 | Spec File | Purpose |
 |-----------|---------|
@@ -17,18 +31,19 @@ This project uses spec-driven development. **Specs are the source of truth.**
 | specs/DECISIONS.md | Architecture decision records (ADR-*) |
 
 **Rules:**
-1. Never implement behavior not defined in specs
-2. Update specs before or with code, never after
-3. Reference spec IDs in commits (e.g., "implements SCHEMA-001")
+1. Read specs before implementing
+2. Never implement behavior not defined in specs
+3. Update specs before or with code, never after
+4. Reference spec IDs in commits (e.g., "implements SCHEMA-001")
 
 ## Project Rules
 
 See `project-rules/*.mdc` for context-specific rules:
 - `general.mdc` - Overall development rules
-- `rust-daemon.mdc` - Rust daemon boundaries
-- `python-agent.mdc` - Python agent boundaries
+- `rust-daemon.mdc` - Rust daemon boundaries (ARCH-001)
+- `python-agent.mdc` - Python agent boundaries (ARCH-002)
 - `specs.mdc` - Specification maintenance
-- `testing.mdc` - Testing requirements
+- `testing.mdc` - Testing requirements (DR4)
 
 ## Architecture
 
@@ -36,16 +51,14 @@ See `project-rules/*.mdc` for context-specific rules:
 Rust Daemon (I/O, storage, MCP) <--IPC--> Python Agent (LLM operations)
 ```
 
-| Component | Responsibility |
-|-----------|----------------|
-| Rust Daemon | Log watching, MCP server, CLI, SQLite storage |
-| Python Agent | Memory extraction, context composition, conflict detection |
-
-See specs/ARCHITECTURE.md for details.
+| Component | Responsibility | Never Does |
+|-----------|----------------|------------|
+| Rust Daemon | Log watching, MCP server, CLI, SQLite | LLM calls |
+| Python Agent | Memory extraction, context composition | File watching |
 
 ## Development Environment
 
-Uses Nix via devenv. Single command setup:
+Uses Nix via devenv (ADR-006). Single command:
 
 ```bash
 devenv shell
@@ -64,6 +77,7 @@ Available commands:
 - Documentation written for AI comprehension
 - English only in code, comments, commits
 - Brief, direct language
+- Today's date: 2025 Dec 9
 
 ### Git Workflow
 
