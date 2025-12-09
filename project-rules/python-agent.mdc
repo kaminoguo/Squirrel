@@ -1,0 +1,76 @@
+---
+description: Rules for Python agent development
+globs: ["agent/**/*.py", "pyproject.toml", "requirements*.txt"]
+---
+
+# Python Agent Rules
+
+## Architecture Boundary (ARCH-002)
+
+The Python agent handles ALL LLM operations and NEVER does file watching.
+
+Agent responsibilities:
+- Memory extraction (PROMPT-001)
+- Context composition (PROMPT-002)
+- Conflict detection (PROMPT-003)
+- CLI interpretation (PROMPT-004)
+- User preference extraction (PROMPT-005)
+
+Agent NEVER:
+- Watches files
+- Writes directly to database (uses IPC)
+- Handles MCP protocol
+
+## Framework
+
+Use PydanticAI for all agents. See ADR-003.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent(
+    model="claude-3-5-sonnet-20241022",
+    result_type=MemoryList,
+    system_prompt=PROMPT_001_SYSTEM,
+)
+```
+
+## Model Tiers (ADR-004)
+
+| Tier | Use Case | Default Model |
+|------|----------|---------------|
+| strong_model | Extraction, conflict resolution | Claude Sonnet |
+| fast_model | Composition, CLI commands | Claude Haiku |
+
+Check specs/PROMPTS.md for which tier each prompt uses.
+
+## Output Schemas
+
+All LLM outputs must be Pydantic models matching specs/SCHEMAS.md:
+
+```python
+class Memory(BaseModel):
+    memory_type: Literal["lesson", "fact", "profile"]
+    text: str
+    confidence: float
+    importance: Literal["critical", "high", "medium", "low"]
+    # ... see SCHEMA-001
+```
+
+## Error Handling
+
+- Rate limit: Exponential backoff, max 3 retries
+- Invalid JSON: Re-prompt with stricter format
+- Timeout: Log, return empty, don't block
+- Content filter: Log, skip memory, continue
+
+## Testing
+
+Use pytest. Mock LLM calls in tests:
+
+```python
+@pytest.fixture
+def mock_llm():
+    with patch("pydantic_ai.Agent.run") as mock:
+        yield mock
+```

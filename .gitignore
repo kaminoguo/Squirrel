@@ -48,3 +48,13 @@ temp/
 reference/learning/cipher/
 reference/learning/mem0/
 reference/learning/letta/
+
+# Nix/devenv
+.devenv/
+.devenv.flake.nix
+devenv.lock
+.direnv/
+
+# Rust
+target/
+Cargo.lock

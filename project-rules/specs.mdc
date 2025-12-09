@@ -1,0 +1,58 @@
+---
+description: Rules for maintaining specification files
+globs: ["specs/**/*.md"]
+---
+
+# Specification Rules
+
+## Spec Structure
+
+All specs live in `specs/` folder:
+
+| File | Purpose |
+|------|---------|
+| CONSTITUTION.md | Project governance, principles |
+| ARCHITECTURE.md | System boundaries, data flow |
+| SCHEMAS.md | Database schemas with IDs |
+| INTERFACES.md | IPC, MCP, CLI contracts |
+| KEYS.md | Declarative key registry |
+| PROMPTS.md | LLM prompts with model tiers |
+| DECISIONS.md | ADR decision log |
+
+## ID Requirements (DR1)
+
+Every element must have a stable ID:
+
+| Type | Format | Example |
+|------|--------|---------|
+| Schema | SCHEMA-NNN | SCHEMA-001 |
+| Interface | IPC-NNN, MCP-NNN, CLI-NNN | IPC-001 |
+| Key | KEY-P-NNN, KEY-U-NNN | KEY-P-001 |
+| Prompt | PROMPT-NNN | PROMPT-001 |
+| Decision | ADR-NNN | ADR-001 |
+
+## AI-Friendly Format (P5)
+
+Write for AI consumption:
+- Tables over prose
+- Explicit schemas with types
+- No ambiguity
+- Code examples where helpful
+
+Bad:
+> "The memory system stores various types of information including lessons and facts."
+
+Good:
+| memory_type | Description |
+|-------------|-------------|
+| lesson | What worked or failed |
+| fact | Stable knowledge |
+
+## Change Process
+
+1. Propose change in PR
+2. Update spec file
+3. Reference spec ID in commit
+4. Implementation follows spec update
+
+Never implement behavior not in specs.
