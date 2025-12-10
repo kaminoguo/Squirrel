@@ -36,6 +36,29 @@ All documentation, specs, and structures are designed for AI comprehension. Use 
 3. Update specs before or with code, never after
 4. Reference spec IDs in commits (e.g., "implements SCHEMA-001")
 
+## AI Workflow
+
+Follow these phases in order. Never skip phases. Never jump to code without a spec.
+
+| Phase | Action | Output |
+|-------|--------|--------|
+| 1. **Specify** | Define WHAT and WHY. No tech stack yet. | `specs/*.md` updated |
+| 2. **Clarify** | Ask questions. Mark unclear areas as `[NEEDS CLARIFICATION: reason]` | Ambiguities resolved |
+| 3. **Plan** | Define HOW (tech stack, architecture, file structure) | Implementation plan |
+| 4. **Tasks** | Break into ordered, independently testable steps | Task list |
+| 5. **Implement** | Execute one task at a time. Test after each. | Working code |
+
+### Before Every Commit (MANDATORY)
+
+Verify these before committing:
+
+| Check | Action if Yes |
+|-------|---------------|
+| Code changed? | Update related spec |
+| Spec changed? | Update related code |
+| New key/schema/interface? | Add to registry with ID |
+| Unclear requirement? | Mark `[NEEDS CLARIFICATION]`, ask user |
+
 ## Project Rules
 
 See `.cursor/rules/*.mdc` for context-specific rules:
@@ -77,7 +100,7 @@ Available commands:
 - Documentation written for AI comprehension
 - English only in code, comments, commits
 - Brief, direct language
-- Today's date: 2025 Dec 9
+- Today's date: 2025 Dec 10
 
 ### Git Workflow
 
