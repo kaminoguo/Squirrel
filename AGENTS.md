@@ -26,7 +26,8 @@ All documentation, specs, and structures are designed for AI comprehension. Use 
 | specs/ARCHITECTURE.md | System boundaries, data flow |
 | specs/SCHEMAS.md | Database schemas (SCHEMA-*) |
 | specs/INTERFACES.md | IPC, MCP, CLI contracts (IPC-*, MCP-*, CLI-*) |
-| specs/KEYS.md | Declarative key registry (KEY-*) |
+| specs/KEYS.md | Key conventions (non-binding suggestions) |
+| specs/POLICY.md | Memory policy configuration |
 | specs/PROMPTS.md | LLM prompts with model tiers (PROMPT-*) |
 | specs/DECISIONS.md | Architecture decision records (ADR-*) |
 
@@ -82,13 +83,13 @@ See `.cursor/rules/*.mdc` for context-specific rules:
 ## Architecture
 
 ```
-Rust Daemon (I/O, storage, MCP) <--IPC--> Python Agent (LLM operations)
+Rust Daemon (I/O, storage, MCP) <--IPC--> Python Memory Service (LLM operations)
 ```
 
 | Component | Responsibility | Never Does |
 |-----------|----------------|------------|
-| Rust Daemon | Log watching, MCP server, CLI, SQLite | LLM calls |
-| Python Agent | Memory extraction, context composition | File watching |
+| Rust Daemon | Log watching, MCP server, CLI, SQLite, guard interception | LLM calls |
+| Python Memory Service | Memory Writer, embeddings, CR-Memory evaluation | File watching, direct DB access |
 
 ## Development Environment
 

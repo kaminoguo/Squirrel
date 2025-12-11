@@ -50,10 +50,8 @@ tmp/
 temp/
 *.tmp
 
-# Cloned repos for learning (keep analysis docs, ignore source)
-reference/learning/cipher/
-reference/learning/mem0/
-reference/learning/letta/
+# Reference materials (local only, not tracked)
+reference/
 
 # Nix/devenv
 .devenv/

@@ -1,6 +1,0 @@
-# Ignore all cloned repos (local learning only)
-*/
-
-# Keep only analysis files
-!.gitignore
-!*.md
