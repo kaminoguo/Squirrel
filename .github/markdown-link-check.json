@@ -1,0 +1,12 @@
+{
+  "ignorePatterns": [
+    {
+      "pattern": "^https://sqrl.dev"
+    },
+    {
+      "pattern": "^#"
+    }
+  ],
+  "replacementPatterns": [],
+  "aliveStatusCodes": [200, 206, 301, 302, 307, 308]
+}

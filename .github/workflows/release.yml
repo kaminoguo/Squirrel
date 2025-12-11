@@ -1,0 +1,183 @@
+# Squirrel Release Pipeline
+# Triggered by version tags (v*)
+# Implements: RELEASE-001, RELEASE-002
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ====================
+  # Build Binaries
+  # ====================
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+
+          # macOS
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+
+          # Windows
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build daemon
+        run: cargo build --release --target ${{ matrix.target }}
+        working-directory: daemon
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir -p dist
+          cp daemon/target/${{ matrix.target }}/release/sqrl dist/
+          cp daemon/target/${{ matrix.target }}/release/sqrl-daemon dist/
+          cp README.md LICENSE dist/
+          cd dist && tar -czvf ../squirrel-${{ matrix.target }}.${{ matrix.archive }} *
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          mkdir dist
+          copy daemon\target\${{ matrix.target }}\release\sqrl.exe dist\
+          copy daemon\target\${{ matrix.target }}\release\sqrl-daemon.exe dist\
+          copy README.md dist\
+          copy LICENSE dist\
+          Compress-Archive -Path dist\* -DestinationPath squirrel-${{ matrix.target }}.${{ matrix.archive }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: squirrel-${{ matrix.target }}
+          path: squirrel-${{ matrix.target }}.${{ matrix.archive }}
+
+  # ====================
+  # Build Python Wheel
+  # ====================
+  python-wheel:
+    name: Build Python Wheel
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Build wheel
+        run: python -m build
+        working-directory: agent
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel
+          path: agent/dist/*
+
+  # ====================
+  # Create Release
+  # ====================
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build, python-wheel]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.whl" \) -exec sha256sum {} \; > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Squirrel v${{ steps.version.outputs.VERSION }}
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
+            artifacts/**/*.whl
+            artifacts/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ====================
+  # Publish to PyPI
+  # ====================
+  pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [release]
+    environment: pypi
+
+    steps:
+      - name: Download Python wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheel
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true

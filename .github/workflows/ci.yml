@@ -1,0 +1,204 @@
+# Squirrel CI Pipeline
+# Runs on all PRs and pushes to main
+# Implements: DR4 (Test Before Merge)
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ====================
+  # Rust Daemon Checks
+  # ====================
+  rust-check:
+    name: Rust Check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+        working-directory: daemon
+
+      - name: Clippy lints
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: daemon
+
+      - name: Run tests
+        run: cargo test --all-features
+        working-directory: daemon
+
+      - name: Build release
+        run: cargo build --release
+        working-directory: daemon
+
+  # ====================
+  # Python Agent Checks
+  # ====================
+  python-check:
+    name: Python Check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest pytest-asyncio pytest-cov
+          pip install -e ".[dev]"
+        working-directory: agent
+
+      - name: Ruff format check
+        run: ruff format --check .
+        working-directory: agent
+
+      - name: Ruff lint
+        run: ruff check .
+        working-directory: agent
+
+      - name: Run tests with coverage
+        run: pytest --cov=squirrel_agent --cov-report=xml --cov-report=term
+        working-directory: agent
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        with:
+          files: agent/coverage.xml
+          flags: python
+          fail_ci_if_error: false
+
+  # ====================
+  # Security Checks
+  # ====================
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Rust security audit
+        run: cargo audit
+        working-directory: daemon
+        continue-on-error: true  # Advisory only for now
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Python security audit
+        run: pip-audit
+        working-directory: agent
+        continue-on-error: true  # Advisory only for now
+
+      - name: Secret scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified
+
+  # ====================
+  # Spec Validation
+  # ====================
+  specs:
+    name: Spec Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check spec ID uniqueness
+        run: |
+          echo "Checking for duplicate spec IDs..."
+          # Extract all spec IDs and check for duplicates
+          grep -rhoE '(SCHEMA|IPC|MCP|CLI|KEY-[PU]|PROMPT|ADR|ARCH|FLOW|DR|PR|COMMIT|REVIEW|ISSUE|SEC|RELEASE|COMM)-[0-9]+' specs/ | sort | uniq -d > duplicates.txt
+          if [ -s duplicates.txt ]; then
+            echo "Duplicate spec IDs found:"
+            cat duplicates.txt
+            exit 1
+          fi
+          echo "No duplicate spec IDs found"
+
+      - name: Validate markdown links
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          folder-path: 'specs/'
+          config-file: '.github/markdown-link-check.json'
+        continue-on-error: true
+
+  # ====================
+  # All Checks Gate
+  # ====================
+  all-checks:
+    name: All Checks Passed
+    runs-on: ubuntu-latest
+    needs: [rust-check, python-check, security, specs]
+    if: always()
+
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [ "${{ needs.rust-check.result }}" != "success" ] || \
+             [ "${{ needs.python-check.result }}" != "success" ]; then
+            echo "Required checks failed"
+            exit 1
+          fi
+          echo "All required checks passed"

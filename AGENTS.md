@@ -29,6 +29,7 @@ All documentation, specs, and structures are designed for AI comprehension. Use 
 | specs/KEYS.md | Declarative key registry (KEY-*) |
 | specs/PROMPTS.md | LLM prompts with model tiers (PROMPT-*) |
 | specs/DECISIONS.md | Architecture decision records (ADR-*) |
+| specs/CONTRIBUTING.md | Collaboration standards (PR-*, COMMIT-*, etc.) |
 
 **Rules:**
 1. Read specs before implementing
@@ -115,11 +116,22 @@ Available commands:
 
 ### Git Workflow
 
+See `specs/CONTRIBUTING.md` for full details.
+
 Branch: `yourname/type-description`
 - `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
 
 Commit: `type(scope): brief description`
 - Reference spec IDs when applicable
+- Scopes: daemon, agent, cli, mcp, ipc, specs, ci
+
+PR Process:
+1. Create branch from main
+2. Make changes, run `fmt` + `lint` + `test-all`
+3. Push and create PR (use template)
+4. CI runs automatically
+5. Get review, address feedback
+6. Squash merge to main
 
 ### Code Quality
 - Write tests for new features (DR4)
