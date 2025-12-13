@@ -269,7 +269,7 @@ Adopt AI-primary, future-impact, declarative memory architecture:
 4. **Memory Writer**: Single strong-model LLM call per episode, outputs ops array
 5. **CR-Memory**: Background job promoting/deprecating based on use_count, opportunities, regret_hits
 6. **Policy-driven**: memory_policy.toml declares thresholds, LLM + CR-Memory implement behavior
-7. **Guard Interception**: Structured guard_pattern enables hot-path tool blocking (no LLM)
+7. **Guards**: Memories with `kind='guard'` and `polarity=-1` for "don't do X" knowledge (soft enforcement via context injection)
 
 **Supersedes:**
 - ADR-005: Declarative keys still exist but LLM decides when to use them
@@ -279,11 +279,45 @@ Adopt AI-primary, future-impact, declarative memory architecture:
 - (+) LLM uses judgment instead of filling forms
 - (+) Memories prove value through actual usage, not heuristics
 - (+) Simpler schema, fewer fields to maintain
-- (+) Guards can block dangerous tool calls without LLM latency
+- (+) Guards inform AI of anti-patterns via context injection (soft enforcement)
 - (+) Declarative policy allows tuning without code changes
 - (-) CR-Memory requires enough opportunities before promotion (cold start)
 - (-) estimated_regret_saved is heuristic (v1), not causal
 - (-) Need to migrate existing memories from old schema
+
+---
+
+## ADR-011: Historical Timeline Start Point for sqrl init
+
+**Status:** accepted
+**Date:** 2025-12-13
+
+**Context:**
+`sqrl init` processes historical CLI logs to bootstrap memories. A key question: what is the "start point" for CR-Memory timeline evaluation?
+
+Options considered:
+1. **Today's date**: Start from now, all historical memories begin as short_term
+2. **Earliest session log**: Start from first log file, process chronologically
+
+Problem with option 1: If init creates memories and they all start as short_term with zero opportunities, they must wait for future sessions to prove value. This defeats Squirrel's advantage - we already HAVE the future sessions in the logs.
+
+**Decision:**
+Use the **earliest session log timestamp** as the timeline start point for `sqrl init`.
+
+| Aspect | Behavior |
+|--------|----------|
+| Timeline origin | Timestamp of earliest log file for project |
+| Processing order | Chronological (oldest → newest) |
+| CR-Memory simulation | Each episode evaluates against memories from previous episodes |
+| Tier assignment | Memories earn long_term tier during init if proven valuable |
+
+**Consequences:**
+- (+) Memories can immediately earn long_term tier based on historical evidence
+- (+) Squirrel's competitive advantage: instant value, no cold start
+- (+) Users get useful memories from first query after init
+- (+) Full retroactive regret measurement against actual history
+- (-) Longer init time (must process all episodes sequentially)
+- (-) More complex init logic (simulate CR-Memory at each episode boundary)
 
 ---
 

@@ -227,16 +227,11 @@ On flush:
       "owner_id": "alice",
       "kind": "guard",
       "tier": "emergency",
+      "polarity": -1,
       "key": null,
       "text": "Do not keep retrying requests with SSL in this project; switch to httpx after the first SSL error.",
       "ttl_days": 3,
-      "confidence": 0.8,
-      "guard_pattern": {
-        "tool": ["Bash", "Http"],
-        "command_contains": ["python", "requests"],
-        "path_prefix": ["services/payment-api"],
-        "recent_errors_contains": ["SSLError"]
-      }
+      "confidence": 0.8
     }
   ],
   "episode_evidence": {
@@ -289,27 +284,25 @@ Pure code:
 - memory_metrics.use_count++
 - memory_metrics.opportunities++ (for injected memories)
 
-### 3.2 Guards and Tool Interception
+### 3.2 Guards and Context Injection
 
 Memories with `kind='guard'` and `tier='emergency'` are special:
 
 1. Appear in context to influence assistant reasoning
-2. Rust daemon uses them as **guard rails** before tool calls
+2. Have `polarity=-1` (anti-patterns, "don't do X" knowledge)
 
-**Guard matching (hot path, deterministic, no LLM):**
+**Important:** Squirrel is passive (log watching). We do NOT intercept tool execution.
 
-Guards have structured `guard_pattern`:
-```json
-{
-  "tool": ["Bash", "Http"],
-  "command_contains": ["python", "requests"],
-  "path_prefix": ["services/payment-api"],
-  "recent_errors_contains": ["SSLError"]
-}
-```
+**Soft enforcement model:**
 
-On every tool call, daemon checks all emergency guards:
-- If pattern matches → block call + return warning, OR ask user confirmation
+| Aspect | Behavior |
+|--------|----------|
+| How guards work | Injected into context with high priority |
+| Who enforces | The AI assistant decides whether to obey |
+| What we can't do | Block tool calls, require confirmation |
+| What we can do | Strongly inform AI of risks/anti-patterns |
+
+Guards are valuable because they represent learned "don't do X" knowledge. The AI, seeing a guard in context, should avoid the anti-pattern. But we cannot force compliance - we inform, AI decides.
 
 ---
 

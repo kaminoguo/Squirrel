@@ -132,15 +132,11 @@ Daemon → Memory Service. Process episode with Memory Writer, return ops array.
         "owner_id": "alice",
         "kind": "guard",
         "tier": "emergency",
+        "polarity": -1,
         "key": null,
         "text": "Do not keep retrying requests with SSL in this project; switch to httpx after the first SSL error.",
         "ttl_days": 3,
-        "confidence": 0.8,
-        "guard_pattern": {
-          "tool": ["Bash", "Http"],
-          "command_contains": ["python", "requests"],
-          "recent_errors_contains": ["SSLError"]
-        }
+        "confidence": 0.8
       },
       {
         "op": "ADD",
@@ -149,11 +145,11 @@ Daemon → Memory Service. Process episode with Memory Writer, return ops array.
         "owner_id": "alice",
         "kind": "pattern",
         "tier": "short_term",
+        "polarity": -1,
         "key": null,
         "text": "In this project, requests often hits SSL certificate errors; use httpx as the default HTTP client instead.",
         "ttl_days": 30,
-        "confidence": 0.85,
-        "guard_pattern": null
+        "confidence": 0.85
       },
       {
         "op": "UPDATE",
@@ -163,11 +159,11 @@ Daemon → Memory Service. Process episode with Memory Writer, return ops array.
         "owner_id": "alice",
         "kind": "invariant",
         "tier": "long_term",
+        "polarity": 1,
         "key": "project.http.client",
         "text": "The standard HTTP client is httpx. Do not use requests due to SSL issues.",
         "ttl_days": null,
-        "confidence": 0.9,
-        "guard_pattern": null
+        "confidence": 0.9
       }
     ],
     "episode_evidence": {
@@ -192,11 +188,11 @@ Daemon → Memory Service. Process episode with Memory Writer, return ops array.
 | ops[].owner_id | string | Owner identifier |
 | ops[].kind | string | `preference`, `invariant`, `pattern`, `guard`, `note` |
 | ops[].tier | string | `short_term`, `long_term`, `emergency` |
+| ops[].polarity | integer | `+1` (recommend) or `-1` (avoid/anti-pattern) |
 | ops[].key | string | Optional declarative key |
 | ops[].text | string | Human-readable memory content |
 | ops[].ttl_days | integer | Days until expiry (null = no expiry) |
 | ops[].confidence | float | 0.0-1.0 confidence score |
-| ops[].guard_pattern | object | For guards: structured matching pattern |
 | episode_evidence | object | Episode-level signals |
 | episode_evidence.episode_id | string | Source episode |
 | episode_evidence.source | string | How memory was derived |
@@ -568,10 +564,24 @@ Initialize project for Squirrel.
 **Actions:**
 1. Create `.sqrl/squirrel.db`
 2. Scan CLI log folders for project mentions
-3. Ingest recent history (unless --skip-history)
+3. Ingest history (unless --skip-history) - see Historical Processing below
 4. Configure MCP for enabled CLIs
 5. Inject instructions into agent files
 6. Register in `~/.sqrl/projects.json`
+
+**Historical Processing (ADR-011):**
+
+Timeline starts from **earliest session log** for the project, not today's date.
+
+| Step | Action |
+|------|--------|
+| 1 | Find all session logs mentioning this project |
+| 2 | Sort by timestamp (oldest first) |
+| 3 | Process episodes chronologically |
+| 4 | For each episode: run Memory Writer, then simulate CR-Memory evaluation |
+| 5 | Memories earn tier promotions based on actual historical usage |
+
+**Result:** After init, memories already have proven tiers (short_term/long_term) based on historical evidence. No cold start.
 
 ---
 
@@ -804,15 +814,3 @@ CR-Memory evaluation is an internal background job. It does NOT expose a dedicat
 
 **Behavior:** See FLOW-004 in ARCHITECTURE.md and algorithm in POLICY.md.
 
----
-
-### INT-002: Guard Pattern Matching
-
-Guard patterns are stored in the `guard_patterns` table and matched by the Rust daemon.
-
-**No dedicated IPC method needed:**
-- Guard memories are emitted in ops[] of IPC-001 ingest_episode (with kind='guard', tier='emergency', and guard_pattern)
-- Daemon stores guard_pattern in database
-- Daemon loads and matches guards before tool execution
-
-**See:** FLOW-003 in ARCHITECTURE.md for full guard interception flow.

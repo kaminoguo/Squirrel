@@ -92,15 +92,16 @@ Constraints: no secrets, no raw stack traces, favor stable over transient.
 - Never store secrets, API keys, or raw stack traces
 - For UPDATE/DEPRECATE ops on keyed invariants/preferences: include target_memory_id
 
-## Guard Patterns
+## Polarity
 
-For kind='guard' with tier='emergency', include a structured guard_pattern:
-{
-  "tool": ["Bash", "Http"],           // Tool types to match
-  "command_contains": ["requests"],   // Substrings in command
-  "path_prefix": ["services/api"],    // Path prefixes (optional)
-  "recent_errors_contains": ["SSLError"]  // Error substrings
-}
+Every memory has a polarity:
+- `polarity: 1` (default) = Recommend this behavior/fact
+- `polarity: -1` = Avoid this behavior (anti-pattern, warning)
+
+Use polarity=-1 for:
+- Guards (kind='guard') - always negative ("don't do X")
+- Anti-patterns learned from failures
+- Warnings about dangerous operations
 
 ## Output Format
 
@@ -115,11 +116,11 @@ Return JSON only:
       "owner_id": "alice",
       "kind": "preference | invariant | pattern | guard | note",
       "tier": "short_term | long_term | emergency",
+      "polarity": 1 | -1,
       "key": "project.http.client | null",
       "text": "1-2 sentence human-readable memory",
       "ttl_days": 30 | null,
-      "confidence": 0.0-1.0,
-      "guard_pattern": { ... } | null
+      "confidence": 0.0-1.0
     }
   ],
   "episode_evidence": {
@@ -178,11 +179,11 @@ Output:
       "owner_id": "alice",
       "kind": "pattern",
       "tier": "short_term",
+      "polarity": -1,
       "key": null,
       "text": "requests library has SSL certificate issues in this environment; httpx works as alternative.",
       "ttl_days": 30,
-      "confidence": 0.85,
-      "guard_pattern": null
+      "confidence": 0.85
     },
     {
       "op": "ADD",
@@ -191,11 +192,11 @@ Output:
       "owner_id": "alice",
       "kind": "invariant",
       "tier": "short_term",
+      "polarity": 1,
       "key": "project.http.client",
       "text": "The standard HTTP client for this project is httpx.",
       "ttl_days": null,
-      "confidence": 0.9,
-      "guard_pattern": null
+      "confidence": 0.9
     }
   ],
   "episode_evidence": {
@@ -238,15 +239,11 @@ Output:
       "owner_id": "alice",
       "kind": "guard",
       "tier": "emergency",
+      "polarity": -1,
       "key": null,
       "text": "Do not keep retrying requests with SSL errors in this project; switch to httpx after the first SSL error.",
       "ttl_days": 7,
-      "confidence": 0.8,
-      "guard_pattern": {
-        "tool": ["Bash", "Http"],
-        "command_contains": ["python", "requests"],
-        "recent_errors_contains": ["SSLError"]
-      }
+      "confidence": 0.8
     },
     {
       "op": "ADD",
@@ -255,11 +252,11 @@ Output:
       "owner_id": "alice",
       "kind": "pattern",
       "tier": "short_term",
+      "polarity": -1,
       "key": null,
       "text": "In this project, requests often hits SSL certificate errors; use httpx as the default HTTP client instead.",
       "ttl_days": 30,
-      "confidence": 0.9,
-      "guard_pattern": null
+      "confidence": 0.9
     }
   ],
   "episode_evidence": {
@@ -327,11 +324,11 @@ Output:
       "owner_id": "alice",
       "kind": "preference",
       "tier": "short_term",
+      "polarity": 1,
       "key": "user.pref.async_style",
       "text": "User prefers async/await over callbacks.",
       "ttl_days": null,
-      "confidence": 0.95,
-      "guard_pattern": null
+      "confidence": 0.95
     }
   ],
   "episode_evidence": {

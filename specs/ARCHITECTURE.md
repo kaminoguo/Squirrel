@@ -54,10 +54,10 @@ High-level system boundaries and data flow.
 │  │         │                │                │               │  │
 │  │         └────────────────┼────────────────┘               │  │
 │  │                          ▼                                │  │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │  │
-│  │  │   Guard     │  │  Commit     │  │  Retrieval  │        │  │
-│  │  │ Interceptor │  │   Layer     │  │   Engine    │        │  │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘        │  │
+│  │              ┌─────────────┐  ┌─────────────┐             │  │
+│  │              │   Commit    │  │  Retrieval  │             │  │
+│  │              │    Layer    │  │   Engine    │             │  │
+│  │              └─────────────┘  └─────────────┘             │  │
 │  │         │                │                │               │  │
 │  │         └────────────────┼────────────────┘               │  │
 │  │                          ▼                                │  │
@@ -108,22 +108,20 @@ High-level system boundaries and data flow.
 
 ### ARCH-001: Rust Daemon
 
-**Responsibility:** All local I/O, storage, vector search, guard interception. **100% offline - no HTTP/network calls.**
+**Responsibility:** All local I/O, storage, vector search. **100% offline - no HTTP/network calls.**
 
 | Module | Crate | Purpose |
 |--------|-------|---------|
 | Log Watcher | notify | File system events for CLI logs |
 | MCP Server | rmcp | Model Context Protocol server |
 | CLI Handler | clap | User-facing commands |
-| Guard Interceptor | - | Check emergency guards before tool execution |
 | Commit Layer | - | Execute memory ops (ADD/UPDATE/DEPRECATE) |
 | Retrieval Engine | rusqlite + sqlite-vec | Key lookup + vector search + ranking |
-| SQLite Storage | rusqlite + sqlite-vec | All tables: memories, evidence, memory_metrics, episodes, guard_patterns |
+| SQLite Storage | rusqlite + sqlite-vec | All tables: memories, evidence, memory_metrics, episodes |
 
 **Owns:**
 - All SQLite read/write operations
 - All sqlite-vec vector similarity queries
-- Guard pattern matching (deterministic, no LLM)
 - Memory metrics updates (use_count, opportunities)
 - Receiving embeddings from Memory Service as float32 arrays
 
@@ -131,6 +129,7 @@ High-level system boundaries and data flow.
 - LLM API calls
 - Embedding generation (done by Memory Service)
 - Any HTTP/network client code
+- Tool interception (we are passive, we watch logs)
 
 ---
 
@@ -154,7 +153,6 @@ High-level system boundaries and data flow.
 - Direct database read/write (all storage via daemon IPC)
 - sqlite-vec queries (daemon handles vector search)
 - MCP protocol handling
-- Guard pattern matching
 
 ---
 
@@ -165,7 +163,7 @@ High-level system boundaries and data flow.
 | Database | Location | Contains |
 |----------|----------|----------|
 | Global DB | `~/.sqrl/squirrel.db` | memories (scope=global), memory_metrics, evidence |
-| Project DB | `<repo>/.sqrl/squirrel.db` | memories (scope=project/repo_path), episodes, evidence, memory_metrics, guard_patterns |
+| Project DB | `<repo>/.sqrl/squirrel.db` | memories (scope=project/repo_path), episodes, evidence, memory_metrics |
 
 **Tables:** See SCHEMAS.md for full definitions.
 
@@ -175,7 +173,6 @@ High-level system boundaries and data flow.
 | evidence | Links memories to source episodes |
 | memory_metrics | Tracks use_count, opportunities, regret for CR-Memory |
 | episodes | Raw episode timeline (events_json) |
-| guard_patterns | Structured patterns for emergency guards |
 
 ---
 
@@ -253,42 +250,29 @@ High-level system boundaries and data flow.
 
 ---
 
-### FLOW-003: Guard Interception
+### FLOW-003: Guard Context Injection
+
+Guards are memories with `kind='guard'` and typically `tier='emergency'`. They represent "don't do X" knowledge.
+
+**Important:** Squirrel is passive (log watching). We do NOT intercept tool execution. Guards are enforced through context injection - we inform the AI, and the AI decides whether to obey.
 
 ```
 Write-time (during FLOW-001):
-1. Memory Writer emits ADD op with kind='guard', tier='emergency'
-2. Op includes structured guard_pattern:
-   {
-     "tool": ["Bash", "Http"],
-     "command_contains": ["python", "requests"],
-     "recent_errors_contains": ["SSLError"]
-   }
-3. Commit layer inserts memory + guard_pattern into DB
+1. Memory Writer emits ADD op with kind='guard', polarity=-1
+2. Guard stored as regular memory with high priority
 
-Run-time (before tool execution):
-1. Daemon about to execute tool (Bash/Edit/Http/etc.)
-2. Daemon collects context:
-   - Tool type
-   - Command/URL
-   - Target path/file
-   - Recent error messages
-3. Daemon loads all guards:
-   - kind='guard', tier='emergency'
-   - status IN ('provisional', 'active')
-4. For each guard, check guard_pattern:
-   - Deterministic string/prefix matching
-   - No LLM in hot path
-5. If guard matches:
-   - Per memory_policy.toml: block / warn / prompt user
-6. If no match: proceed with tool execution
+Retrieval-time (during FLOW-002):
+1. get_task_context retrieves relevant memories
+2. Guards (tier='emergency') get highest priority in ranking
+3. Guard text injected prominently in context
+4. AI reads warning and (hopefully) obeys
 
-CR-Memory evaluation (later):
-- Guard fires often + prevents issues → extend TTL / promote
-- Guard never fires → deprecate / decay
+Example injected context:
+  "WARNING: Do not use DROP TABLE without explicit user confirmation.
+   This caused data loss on 2025-11-15."
 ```
 
-**Latency Target:** <5ms for guard matching (deterministic, no LLM)
+**No interception:** We cannot block tool calls. We inform, AI decides.
 
 ---
 
@@ -335,6 +319,33 @@ For each memory m (status='provisional' or 'active'):
 ```
 
 **Latency Target:** <200ms
+
+---
+
+### FLOW-006: sqrl init Historical Processing (ADR-011)
+
+```
+1. User runs `sqrl init`
+2. Daemon scans CLI log folders for sessions mentioning this project
+3. Sort all sessions by timestamp (earliest first)
+4. Set timeline_origin = timestamp of earliest session
+5. For each session chronologically:
+   a. Parse session into episodes
+   b. For each episode:
+      - Call Memory Writer (FLOW-001 steps 7-10)
+      - Memories created with timestamps relative to episode time
+   c. After episode batch: run CR-Memory evaluation (FLOW-004)
+      - Memories from earlier episodes have opportunities from later episodes
+      - Promotion/deprecation based on actual historical usage
+6. Final state: memories have earned tiers based on full history
+7. Configure MCP, inject instructions (see INTERFACES.md INIT-001)
+```
+
+**Key Difference from Live Processing:**
+- Live: CR-Memory runs periodically, memories start cold
+- Init: CR-Memory simulated after each batch, memories earn tiers immediately
+
+**Result:** User gets long_term memories from first query - no waiting period.
 
 ---
 

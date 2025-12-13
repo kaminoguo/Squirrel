@@ -19,6 +19,7 @@ CREATE TABLE memories (
 
   kind        TEXT NOT NULL,              -- 'preference' | 'invariant' | 'pattern' | 'guard' | 'note'
   tier        TEXT NOT NULL,              -- 'short_term' | 'long_term' | 'emergency'
+  polarity    INTEGER DEFAULT 1,          -- +1 = recommend/do this, -1 = avoid/don't do this
   key         TEXT,                       -- optional declarative key (e.g., 'project.http.client')
   text        TEXT NOT NULL,              -- 1-2 sentence human-readable memory
 
@@ -48,8 +49,18 @@ CREATE INDEX idx_memories_status ON memories(status);
 | owner_type | TEXT | No | `user`, `team`, `org` |
 | kind | TEXT | No | `preference`, `invariant`, `pattern`, `guard`, `note` |
 | tier | TEXT | No | `short_term`, `long_term`, `emergency` |
+| polarity | INTEGER | No | `+1` (recommend), `-1` (avoid) |
 | status | TEXT | No | `provisional`, `active`, `deprecated` |
 | confidence | REAL | Yes | 0.0 - 1.0 |
+
+### Polarity Semantics
+
+| Polarity | Meaning | Example |
+|----------|---------|---------|
+| `+1` | Recommend this behavior/fact | "Use httpx as HTTP client" |
+| `-1` | Avoid this behavior (anti-pattern) | "Don't use requests - causes SSL errors" |
+
+Anti-patterns (`polarity=-1`) are especially valuable because "don't do X" knowledge often prevents repeated mistakes. CR-Memory can measure regret reduction more clearly for negative memories.
 
 ### Kind Semantics
 
@@ -215,35 +226,12 @@ CREATE INDEX idx_episodes_start ON episodes(start_ts);
 
 ---
 
-## SCHEMA-005: guard_patterns
-
-Optional structured patterns for guards. Enables fast deterministic matching.
-
-```sql
-CREATE TABLE guard_patterns (
-  id                    TEXT PRIMARY KEY,   -- UUID
-  memory_id             TEXT NOT NULL,      -- FK to memories (kind='guard')
-  tool_types            TEXT,               -- JSON array: ["Bash", "Http"]
-  command_contains      TEXT,               -- JSON array: ["python", "requests"]
-  path_prefix           TEXT,               -- JSON array: ["services/payment-api"]
-  error_contains        TEXT,               -- JSON array: ["SSLError"]
-  created_at            TEXT NOT NULL,
-  FOREIGN KEY (memory_id) REFERENCES memories(id)
-);
-
-CREATE INDEX idx_guard_patterns_memory ON guard_patterns(memory_id);
-```
-
-Used by Rust daemon for hot-path tool interception (no LLM in execution path).
-
----
-
 ## Database Files
 
 | Scope | Path | Contains |
 |-------|------|----------|
 | Global | `~/.sqrl/squirrel.db` | memories (scope=global), memory_metrics, evidence |
-| Project | `<repo>/.sqrl/squirrel.db` | memories (scope=project/repo_path), episodes, evidence, memory_metrics, guard_patterns |
+| Project | `<repo>/.sqrl/squirrel.db` | memories (scope=project/repo_path), episodes, evidence, memory_metrics |
 
 ---
 
