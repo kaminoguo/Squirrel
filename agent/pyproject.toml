@@ -1,0 +1,39 @@
+[project]
+name = "sqrl-agent"
+version = "0.1.0"
+description = "Python Memory Service for Squirrel"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "openai>=1.0",
+    "structlog>=24.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[project.scripts]
+sqrl-agent = "sqrl.ipc.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sqrl"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
