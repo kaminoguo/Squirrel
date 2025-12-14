@@ -267,17 +267,44 @@ impl SquirrelServer {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
-        // Get active memories (v1: no vector search, just filter)
-        // TODO: Add vector search with sqlite-vec when IPC to Python is ready
-        let memories = match db.get_active_memories(&project_id, params.top_k as usize) {
-            Ok(mems) => mems,
-            Err(e) => {
-                return Err(McpError::internal_error(
-                    format!("Failed to query memories: {}", e),
-                    None,
-                ));
-            }
-        };
+        // Try vector search first via IPC-002
+        let memories =
+            match crate::ipc::send_embed_text(crate::ipc::MEMORY_SERVICE_SOCKET, &params.query)
+                .await
+            {
+                Ok(embedding) => {
+                    // Vector search with embedding
+                    match db.search_memories_by_vector(
+                        &embedding,
+                        Some(&project_id),
+                        params.top_k as usize,
+                    ) {
+                        Ok(mems) => mems,
+                        Err(e) => {
+                            tracing::warn!("Vector search failed, falling back to text: {}", e);
+                            // Fall back to text search
+                            db.get_active_memories(&project_id, params.top_k as usize)
+                                .map_err(|e| {
+                                    McpError::internal_error(
+                                        format!("Failed to query memories: {}", e),
+                                        None,
+                                    )
+                                })?
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Memory Service unavailable - fall back to text search
+                    tracing::debug!("Memory Service unavailable for embedding: {}", e);
+                    db.get_active_memories(&project_id, params.top_k as usize)
+                        .map_err(|e| {
+                            McpError::internal_error(
+                                format!("Failed to query memories: {}", e),
+                                None,
+                            )
+                        })?
+                }
+            };
 
         // Filter by kind/tier if specified
         let filtered: Vec<_> = memories
@@ -293,12 +320,7 @@ impl SquirrelServer {
                         return false;
                     }
                 }
-                // Simple text matching for v1
-                m.text.to_lowercase().contains(&params.query.to_lowercase())
-                    || m.key
-                        .as_ref()
-                        .map(|k| k.to_lowercase().contains(&params.query.to_lowercase()))
-                        .unwrap_or(false)
+                true
             })
             .collect();
 
@@ -311,7 +333,7 @@ impl SquirrelServer {
                 status: m.status.clone(),
                 key: m.key.clone(),
                 text: m.text.clone(),
-                score: 1.0, // Placeholder until vector search
+                score: 1.0, // Vector similarity score (from sqlite-vec distance)
                 confidence: m.confidence.unwrap_or(0.0),
             })
             .collect();

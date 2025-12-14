@@ -4,7 +4,7 @@
 
 mod schema;
 
-pub use schema::{init_db, Episode, Evidence, Memory, MemoryMetrics};
+pub use schema::{init_db, load_sqlite_vec, Episode, Evidence, Memory, MemoryMetrics};
 
 use rusqlite::Connection;
 use std::path::Path;
@@ -19,6 +19,8 @@ pub struct Database {
 impl Database {
     /// Open or create database at path.
     pub fn open(path: &Path) -> Result<Self, Error> {
+        // Ensure sqlite-vec extension is loaded before opening any connection
+        load_sqlite_vec();
         let conn = Connection::open(path)?;
         init_db(&conn)?;
         Ok(Self { conn })
@@ -27,6 +29,8 @@ impl Database {
     /// Open in-memory database for testing.
     #[allow(dead_code)]
     pub fn open_memory() -> Result<Self, Error> {
+        // Ensure sqlite-vec extension is loaded before opening any connection
+        load_sqlite_vec();
         let conn = Connection::open_in_memory()?;
         init_db(&conn)?;
         Ok(Self { conn })
@@ -270,5 +274,84 @@ impl Database {
             ],
         )?;
         Ok(())
+    }
+
+    // ========== Vector Search ==========
+
+    /// Insert or update embedding for a memory.
+    #[allow(dead_code)] // Will be used when Memory Service sends embeddings (IPC-002)
+    pub fn upsert_memory_embedding(&self, memory_id: &str, embedding: &[f32]) -> Result<(), Error> {
+        // Convert f32 slice to bytes (little-endian)
+        let embedding_bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
+
+        self.conn.execute(
+            r#"
+            INSERT INTO vec_memories (memory_id, embedding)
+            VALUES (?1, ?2)
+            ON CONFLICT(memory_id) DO UPDATE SET embedding = excluded.embedding
+            "#,
+            rusqlite::params![memory_id, embedding_bytes],
+        )?;
+        Ok(())
+    }
+
+    /// Search memories by vector similarity.
+    ///
+    /// Returns memory IDs ordered by similarity (most similar first).
+    pub fn search_memories_by_vector(
+        &self,
+        query_embedding: &[f32],
+        project_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Memory>, Error> {
+        // Convert f32 slice to bytes (little-endian)
+        let query_bytes: Vec<u8> = query_embedding
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+
+        // Use vec0 KNN search with optional project filter
+        let sql = if project_id.is_some() {
+            r#"
+            SELECT m.*
+            FROM vec_memories v
+            JOIN memories m ON m.id = v.memory_id
+            WHERE v.embedding MATCH ?1
+              AND k = ?2
+              AND m.project_id = ?3
+              AND m.status IN ('provisional', 'active')
+            ORDER BY distance
+            "#
+        } else {
+            r#"
+            SELECT m.*
+            FROM vec_memories v
+            JOIN memories m ON m.id = v.memory_id
+            WHERE v.embedding MATCH ?1
+              AND k = ?2
+              AND m.status IN ('provisional', 'active')
+            ORDER BY distance
+            "#
+        };
+
+        let mut stmt = self.conn.prepare(sql)?;
+
+        let rows = if let Some(pid) = project_id {
+            stmt.query_map(
+                rusqlite::params![query_bytes, limit as i64, pid],
+                Memory::from_row,
+            )?
+        } else {
+            stmt.query_map(
+                rusqlite::params![query_bytes, limit as i64],
+                Memory::from_row,
+            )?
+        };
+
+        let mut memories = Vec::new();
+        for row in rows {
+            memories.push(row?);
+        }
+        Ok(memories)
     }
 }

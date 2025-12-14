@@ -212,6 +212,62 @@ pub async fn send_ingest_chunk(
     serde_json::from_value(result).map_err(|e| Error::ipc(format!("Invalid response: {}", e)))
 }
 
+/// IPC-002 embed_text request parameters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbedTextRequest {
+    pub text: String,
+}
+
+/// IPC-002 embed_text response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbedTextResponse {
+    pub embedding: Vec<f32>,
+}
+
+/// Send embed_text request to Memory Service (IPC-002).
+pub async fn send_embed_text(socket_path: &str, text: &str) -> Result<Vec<f32>, Error> {
+    let stream = UnixStream::connect(socket_path).await.map_err(|e| {
+        Error::ipc(format!(
+            "Failed to connect to Memory Service at {}: {}",
+            socket_path, e
+        ))
+    })?;
+    let (reader, mut writer) = stream.into_split();
+
+    let request = EmbedTextRequest {
+        text: text.to_string(),
+    };
+
+    let rpc_request = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: serde_json::json!(2),
+        method: "embed_text".to_string(),
+        params: serde_json::to_value(&request).map_err(|e| Error::ipc(e.to_string()))?,
+    };
+
+    let request_json = serde_json::to_string(&rpc_request)?;
+    writer.write_all(request_json.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+
+    let mut reader = BufReader::new(reader);
+    let mut response_line = String::new();
+    reader.read_line(&mut response_line).await?;
+
+    let response: JsonRpcResponse = serde_json::from_str(&response_line)?;
+    if let Some(error) = response.error {
+        return Err(Error::ipc(format!("Embedding error: {}", error.message)));
+    }
+
+    let result = response
+        .result
+        .ok_or_else(|| Error::ipc("Empty result from embed_text"))?;
+
+    let embed_response: EmbedTextResponse = serde_json::from_value(result)
+        .map_err(|e| Error::ipc(format!("Invalid embedding response: {}", e)))?;
+
+    Ok(embed_response.embedding)
+}
+
 /// Send status request to daemon.
 #[allow(dead_code)] // For sqrl status (CLI-008)
 pub async fn send_status(socket_path: &str) -> Result<serde_json::Value, Error> {

@@ -20,6 +20,7 @@ tokio = { version = "1", features = ["full"] }
 # SQLite with vector extension
 rusqlite = { version = "0.32", features = ["bundled"] }
 sqlite-vec = "0.1"
+zerocopy = { version = "0.8", features = ["derive"] }
 
 # File watching
 notify = { version = "7", default-features = false, features = ["macos_kqueue"] }

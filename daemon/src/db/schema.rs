@@ -2,12 +2,27 @@
 //!
 //! Implements SCHEMA-001 to SCHEMA-004 from specs/SCHEMAS.md.
 
-use rusqlite::{Connection, Result, Row};
+use rusqlite::{ffi::sqlite3_auto_extension, Connection, Result, Row};
+use std::sync::Once;
 
 use crate::error::Error;
 
+/// Load sqlite-vec extension once.
+static INIT_VEC: Once = Once::new();
+
+/// Load the sqlite-vec extension globally (must be called before any Connection::open).
+pub fn load_sqlite_vec() {
+    INIT_VEC.call_once(|| unsafe {
+        sqlite3_auto_extension(Some(std::mem::transmute(
+            sqlite_vec::sqlite3_vec_init as *const (),
+        )));
+    });
+}
+
 /// Initialize database with all tables.
 pub fn init_db(conn: &Connection) -> Result<(), Error> {
+    // Ensure sqlite-vec is loaded
+    load_sqlite_vec();
     // SCHEMA-001: memories
     conn.execute_batch(
         r#"
@@ -91,6 +106,17 @@ pub fn init_db(conn: &Connection) -> Result<(), Error> {
         CREATE INDEX IF NOT EXISTS idx_episodes_project ON episodes(project_id);
         CREATE INDEX IF NOT EXISTS idx_episodes_processed ON episodes(processed);
         CREATE INDEX IF NOT EXISTS idx_episodes_start ON episodes(start_ts);
+        "#,
+    )?;
+
+    // Vector index for semantic search (requires sqlite-vec extension)
+    // Using 384 dimensions (common for sentence transformers like all-MiniLM-L6-v2)
+    conn.execute_batch(
+        r#"
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
+            memory_id TEXT PRIMARY KEY,
+            embedding FLOAT[384]
+        );
         "#,
     )?;
 
