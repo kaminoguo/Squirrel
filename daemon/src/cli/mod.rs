@@ -1,13 +1,17 @@
 //! CLI commands for Squirrel.
 
+pub mod agents;
 pub mod config;
 pub mod daemon;
 pub mod export;
 pub mod flush;
 pub mod forget;
+pub mod gitignore;
 pub mod import;
 pub mod init;
+pub mod instructions;
 pub mod mcp;
+pub mod mcp_config;
 pub mod policy;
 pub mod search;
 pub mod status;

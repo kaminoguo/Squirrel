@@ -31,6 +31,12 @@ pub enum Error {
     #[error("Watcher error: {0}")]
     Watcher(String),
 
+    #[error("MCP error: {0}")]
+    Mcp(String),
+
+    #[error("Validation error: {0}")]
+    Validation(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -46,5 +52,9 @@ impl Error {
 
     pub fn other(msg: impl Into<String>) -> Self {
         Error::Other(msg.into())
+    }
+
+    pub fn validation(msg: impl Into<String>) -> Self {
+        Error::Validation(msg.into())
     }
 }

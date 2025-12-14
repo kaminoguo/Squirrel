@@ -373,9 +373,23 @@ For each memory m (status='provisional' or 'active'):
 src/sqrl/
 ├── __init__.py          # Package exports
 ├── chunking.py          # Event chunking for Memory Writer (PROMPT-001)
+├── cr_memory.py         # CR-Memory evaluation logic (FLOW-004)
+├── embeddings.py        # Embedding generation (IPC-002)
+├── ingest.py            # Ingest pipeline orchestration
+├── retrieval.py         # Memory retrieval and ranking
 ├── db/
 │   ├── __init__.py
+│   ├── repository.py    # Database repository pattern
 │   └── schema.py        # SQLite schema (SCHEMA-001 to 004)
+├── ipc/
+│   ├── __init__.py
+│   ├── handlers.py      # IPC method handlers (IPC-001 to IPC-005)
+│   └── server.py        # JSON-RPC 2.0 server over Unix socket
+├── memory_writer/
+│   ├── __init__.py
+│   ├── models.py        # Memory operation data models
+│   ├── prompts.py       # LLM prompts for Memory Writer (PROMPT-001)
+│   └── writer.py        # Memory Writer implementation
 └── parsers/
     ├── __init__.py
     ├── base.py          # BaseParser interface, Event/Episode dataclasses
@@ -385,9 +399,60 @@ src/sqrl/
 | Module | Purpose | Spec Reference |
 |--------|---------|----------------|
 | sqrl.chunking | Split events into chunks for Memory Writer | PROMPT-001 |
+| sqrl.cr_memory | CR-Memory promotion/deprecation logic | FLOW-004 |
+| sqrl.embeddings | Embedding generation via OpenAI | IPC-002 |
+| sqrl.ingest | Ingest pipeline orchestration | FLOW-001 |
+| sqrl.retrieval | Memory retrieval and ranking | FLOW-002 |
+| sqrl.db.repository | Database repository pattern | - |
 | sqrl.db.schema | SQLite schema, init, connections | SCHEMA-001 to 004 |
+| sqrl.ipc.handlers | IPC method handlers | IPC-001 to IPC-005 |
+| sqrl.ipc.server | JSON-RPC 2.0 server | - |
+| sqrl.memory_writer | Episode → ops extraction | PROMPT-001 |
 | sqrl.parsers.base | Parser interface, data models | - |
 | sqrl.parsers.claude_code | Parse Claude Code JSONL logs | - |
+
+---
+
+## Rust Daemon Structure
+
+```
+daemon/
+├── Cargo.toml           # Dependencies and build config
+└── src/
+    ├── main.rs          # Entry point, CLI dispatch
+    ├── config.rs        # Configuration structs
+    ├── error.rs         # Error types (thiserror)
+    ├── cli/
+    │   ├── mod.rs       # CLI command definitions (clap)
+    │   ├── init.rs      # sqrl init (CLI-002)
+    │   ├── search.rs    # sqrl search (CLI-003)
+    │   ├── forget.rs    # sqrl forget (CLI-004)
+    │   ├── export.rs    # sqrl export (CLI-005)
+    │   ├── import.rs    # sqrl import (CLI-006)
+    │   ├── status.rs    # sqrl status (CLI-007)
+    │   ├── config.rs    # sqrl config (CLI-008)
+    │   ├── sync.rs      # sqrl sync (CLI-009)
+    │   ├── flush.rs     # sqrl flush (CLI-010)
+    │   ├── policy.rs    # sqrl policy (CLI-011)
+    │   ├── mcp.rs       # sqrl mcp (CLI-012)
+    │   └── daemon.rs    # sqrl daemon (CLI-013)
+    ├── db/
+    │   ├── mod.rs       # Database operations wrapper
+    │   └── schema.rs    # Schema initialization (SCHEMA-001 to 004)
+    ├── ipc/
+    │   └── mod.rs       # JSON-RPC 2.0 client/server
+    └── watcher/
+        └── mod.rs       # Log file watcher (notify)
+```
+
+| Module | Purpose | Spec Reference |
+|--------|---------|----------------|
+| daemon::cli | CLI command definitions and dispatch | CLI-001 to CLI-013 |
+| daemon::db | SQLite operations, schema init | SCHEMA-001 to 004 |
+| daemon::ipc | IPC client/server over Unix socket | IPC-001 to IPC-005 |
+| daemon::watcher | File system event watching | FLOW-001 |
+| daemon::config | Configuration loading and structs | - |
+| daemon::error | Error types with thiserror | - |
 
 ---
 

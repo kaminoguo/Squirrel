@@ -5,6 +5,7 @@ mod config;
 mod db;
 mod error;
 mod ipc;
+mod mcp;
 mod watcher;
 
 use clap::Parser;
