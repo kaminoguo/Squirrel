@@ -3,6 +3,15 @@
 __version__ = "0.1.0"
 
 from sqrl.chunking import ChunkConfig, EventChunk, chunk_events, events_to_json
+from sqrl.cr_memory import (
+    CRMemoryEvaluator,
+    EvalDecision,
+    EvalResult,
+    Memory,
+    MemoryMetrics,
+    Policy,
+    load_policy,
+)
 from sqrl.embeddings import (
     EmbeddingConfig,
     EmbeddingError,
@@ -15,6 +24,7 @@ from sqrl.embeddings import (
 from sqrl.ingest import IngestPipeline, IngestResult
 from sqrl.ipc import (
     EmbedTextHandler,
+    EvaluateMemoriesHandler,
     IngestChunkHandler,
     IPCServer,
     SearchMemoriesHandler,
@@ -28,6 +38,14 @@ __all__ = [
     "EventChunk",
     "chunk_events",
     "events_to_json",
+    # CR-Memory (FLOW-004)
+    "CRMemoryEvaluator",
+    "EvalDecision",
+    "EvalResult",
+    "Memory",
+    "MemoryMetrics",
+    "Policy",
+    "load_policy",
     # Embeddings (IPC-002)
     "EmbeddingConfig",
     "EmbeddingError",
@@ -45,6 +63,7 @@ __all__ = [
     "IngestChunkHandler",
     "EmbedTextHandler",
     "SearchMemoriesHandler",
+    "EvaluateMemoriesHandler",
     # Memory Writer
     "MemoryWriter",
     "MemoryWriterConfig",

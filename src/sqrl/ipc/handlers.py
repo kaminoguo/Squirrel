@@ -5,8 +5,17 @@ Implements IPC-001, IPC-002, IPC-003, IPC-004 from INTERFACES.md.
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Optional
 
+from sqrl.cr_memory import (
+    CRMemoryEvaluator,
+    EvalResult,
+    Memory,
+    MemoryMetrics,
+    Policy,
+    load_policy,
+)
 from sqrl.embeddings import (
     EmbeddingConfig,
     EmbeddingError,
@@ -31,6 +40,8 @@ ERROR_LLM_ERROR = -32003
 ERROR_COMPOSE_EMPTY_TASK = -32010
 ERROR_SEARCH_PROJECT_NOT_INIT = -32010
 ERROR_SEARCH_EMPTY_QUERY = -32012
+ERROR_CR_MEMORY_EMPTY = -32020
+ERROR_CR_MEMORY_EVAL = -32021
 
 
 @dataclass
@@ -270,9 +281,96 @@ class SearchMemoriesHandler:
         return {"results": []}
 
 
+@dataclass
+class EvaluateMemoriesHandler:
+    """
+    Handler for IPC-005: evaluate_memories.
+
+    Daemon → Memory Service. Run CR-Memory evaluation on memories.
+    """
+
+    policy: Policy
+    evaluator: CRMemoryEvaluator
+
+    def __init__(self, policy: Optional[Policy] = None):
+        self.policy = policy or load_policy()
+        self.evaluator = CRMemoryEvaluator(self.policy)
+
+    async def __call__(self, params: dict) -> dict:
+        """
+        Evaluate memories for promotion/deprecation.
+
+        Args:
+            params: Request params with memories list
+
+        Returns:
+            Dict with decisions array
+        """
+        memories_data = params.get("memories", [])
+        if not memories_data:
+            raise IPCError(ERROR_CR_MEMORY_EMPTY, "No memories to evaluate")
+
+        now_str = params.get("now")
+        if now_str:
+            now = datetime.fromisoformat(now_str.replace("Z", "+00:00"))
+        else:
+            now = datetime.now(timezone.utc)
+
+        decisions = []
+
+        for m_data in memories_data:
+            # Parse memory
+            memory = Memory(
+                id=m_data["id"],
+                kind=m_data.get("kind", "note"),
+                status=m_data.get("status", "provisional"),
+                tier=m_data.get("tier", "short_term"),
+                expires_at=_parse_datetime(m_data.get("expires_at")),
+            )
+
+            # Parse metrics
+            metrics_data = m_data.get("metrics", {})
+            metrics = MemoryMetrics(
+                memory_id=memory.id,
+                use_count=metrics_data.get("use_count", 0),
+                opportunities=metrics_data.get("opportunities", 0),
+                suspected_regret_hits=metrics_data.get("suspected_regret_hits", 0),
+                estimated_regret_saved=metrics_data.get("estimated_regret_saved", 0.0),
+                last_used_at=_parse_datetime(metrics_data.get("last_used_at")),
+                last_evaluated_at=_parse_datetime(metrics_data.get("last_evaluated_at")),
+            )
+
+            # Evaluate
+            decision = self.evaluator.evaluate(memory, metrics, now)
+
+            # Only include if there's a change
+            if decision.result != EvalResult.NO_CHANGE:
+                new_expires = None
+                if decision.new_expires_at:
+                    new_expires = decision.new_expires_at.isoformat()
+                decisions.append({
+                    "memory_id": decision.memory_id,
+                    "result": decision.result.value,
+                    "new_status": decision.new_status,
+                    "new_tier": decision.new_tier,
+                    "new_expires_at": new_expires,
+                    "reason": decision.reason,
+                })
+
+        return {"decisions": decisions}
+
+
+def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
+    """Parse ISO 8601 datetime string."""
+    if value is None:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def create_handlers(
     writer_config: Optional[MemoryWriterConfig] = None,
     embedding_config: Optional[EmbeddingConfig] = None,
+    policy: Optional[Policy] = None,
 ) -> dict[str, Any]:
     """
     Create all IPC handlers.
@@ -285,4 +383,5 @@ def create_handlers(
         "embed_text": EmbedTextHandler(embedding_config),
         "compose_context": ComposeContextHandler(),
         "search_memories": SearchMemoriesHandler(),
+        "evaluate_memories": EvaluateMemoriesHandler(policy),
     }

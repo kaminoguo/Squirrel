@@ -7,6 +7,7 @@ between Rust daemon and Python Memory Service.
 
 from sqrl.ipc.handlers import (
     EmbedTextHandler,
+    EvaluateMemoriesHandler,
     IngestChunkHandler,
     SearchMemoriesHandler,
 )
@@ -18,4 +19,5 @@ __all__ = [
     "IngestChunkHandler",
     "EmbedTextHandler",
     "SearchMemoriesHandler",
+    "EvaluateMemoriesHandler",
 ]
