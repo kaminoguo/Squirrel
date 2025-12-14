@@ -118,6 +118,7 @@ impl Database {
     }
 
     /// Update memory status/tier.
+    #[allow(dead_code)] // For CR-Memory evaluation (FLOW-004)
     pub fn update_memory_status(
         &self,
         id: &str,
@@ -184,6 +185,7 @@ impl Database {
     }
 
     /// Get metrics for a memory.
+    #[allow(dead_code)] // For CR-Memory evaluation (FLOW-004)
     pub fn get_metrics(&self, memory_id: &str) -> Result<Option<MemoryMetrics>, Error> {
         let mut stmt = self
             .conn
@@ -200,6 +202,7 @@ impl Database {
     // ========== Episodes ==========
 
     /// Insert an episode.
+    #[allow(dead_code)] // For historical processing (ADR-011)
     pub fn insert_episode(&self, episode: &Episode) -> Result<(), Error> {
         self.conn.execute(
             r#"
@@ -220,6 +223,7 @@ impl Database {
     }
 
     /// Get unprocessed episodes.
+    #[allow(dead_code)] // For historical processing (ADR-011)
     pub fn get_unprocessed_episodes(&self, project_id: &str) -> Result<Vec<Episode>, Error> {
         let mut stmt = self.conn.prepare(
             r#"
@@ -238,6 +242,7 @@ impl Database {
     }
 
     /// Mark episode as processed.
+    #[allow(dead_code)] // For historical processing (ADR-011)
     pub fn mark_episode_processed(&self, id: &str) -> Result<(), Error> {
         self.conn
             .execute("UPDATE episodes SET processed = 1 WHERE id = ?1", [id])?;
@@ -247,6 +252,7 @@ impl Database {
     // ========== Evidence ==========
 
     /// Insert evidence linking memory to episode.
+    #[allow(dead_code)] // For memory commit (FLOW-001)
     pub fn insert_evidence(&self, evidence: &Evidence) -> Result<(), Error> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(

@@ -143,6 +143,7 @@ impl Memory {
 
 /// Memory metrics record (SCHEMA-003).
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // For CR-Memory evaluation (FLOW-004)
 pub struct MemoryMetrics {
     pub memory_id: String,
     pub use_count: i32,
@@ -154,6 +155,7 @@ pub struct MemoryMetrics {
 }
 
 impl MemoryMetrics {
+    #[allow(dead_code)]
     pub fn from_row(row: &Row<'_>) -> Result<Self> {
         Ok(Self {
             memory_id: row.get("memory_id")?,
@@ -169,6 +171,7 @@ impl MemoryMetrics {
 
 /// Episode record (SCHEMA-004).
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // For historical processing (ADR-011)
 pub struct Episode {
     pub id: String,
     pub project_id: String,
@@ -180,6 +183,7 @@ pub struct Episode {
 }
 
 impl Episode {
+    #[allow(dead_code)]
     pub fn from_row(row: &Row<'_>) -> Result<Self> {
         Ok(Self {
             id: row.get("id")?,
@@ -195,6 +199,7 @@ impl Episode {
 
 /// Evidence record (SCHEMA-002).
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // For memory commit (FLOW-001)
 pub struct Evidence {
     pub id: String,
     pub memory_id: String,
@@ -205,6 +210,7 @@ pub struct Evidence {
 }
 
 impl Evidence {
+    #[allow(dead_code)]
     pub fn from_row(row: &Row<'_>) -> Result<Self> {
         Ok(Self {
             id: row.get("id")?,

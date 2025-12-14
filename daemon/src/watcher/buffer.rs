@@ -53,6 +53,7 @@ pub struct Evidence {
 
 /// Episode boundary detected by Memory Service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)] // For IPC-001 response parsing
 pub struct EpisodeBoundary {
     pub start_idx: usize,
     pub end_idx: usize,
@@ -85,6 +86,7 @@ pub struct IngestChunkRequest {
 
 /// IPC-001 ingest_chunk response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)] // For IPC-001 response parsing
 pub struct IngestChunkResponse {
     pub episodes: Vec<EpisodeBoundary>,
     pub memories: Vec<MemoryOp>,
@@ -112,6 +114,7 @@ pub struct EventBuffer {
     /// Chunk size for batching.
     chunk_size: usize,
     /// Channel to send processed memory ops.
+    #[allow(dead_code)] // For IPC integration
     ops_tx: mpsc::Sender<Vec<MemoryOp>>,
     /// Default owner type.
     owner_type: String,
@@ -175,6 +178,7 @@ impl EventBuffer {
     }
 
     /// Get sessions that have pending events.
+    #[allow(dead_code)] // For IPC integration
     pub fn pending_sessions(&self) -> Vec<String> {
         self.sessions
             .iter()
@@ -219,6 +223,7 @@ impl EventBuffer {
     }
 
     /// Process response from Memory Service.
+    #[allow(dead_code)] // For IPC integration
     pub async fn process_response(
         &mut self,
         session_id: &str,
@@ -261,11 +266,13 @@ impl EventBuffer {
     }
 
     /// Flush all pending events for a session (end of session).
+    #[allow(dead_code)] // For IPC integration
     pub fn flush_session(&mut self, session_id: &str) -> Option<IngestChunkRequest> {
         self.build_chunk_request(session_id, None)
     }
 
     /// Clear a session from the buffer.
+    #[allow(dead_code)] // For IPC integration
     pub fn clear_session(&mut self, session_id: &str) {
         self.sessions.remove(session_id);
     }

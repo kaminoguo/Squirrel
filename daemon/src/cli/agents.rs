@@ -82,6 +82,7 @@ impl AgentId {
 /// Agent configuration paths and detection signals.
 #[derive(Debug)]
 pub struct AgentConfig {
+    #[allow(dead_code)] // For API completeness
     pub id: AgentId,
     pub detection_signals: Vec<PathBuf>,
     pub rules_files: Vec<PathBuf>,
@@ -158,6 +159,7 @@ impl AgentConfig {
 pub struct DetectedAgent {
     pub id: AgentId,
     pub config: AgentConfig,
+    #[allow(dead_code)] // For debugging and future status display
     pub detected_signals: Vec<PathBuf>,
 }
 

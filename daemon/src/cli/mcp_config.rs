@@ -111,14 +111,6 @@ pub fn merge_toml_mcp_config(path: &Path, backup_path: &Path) -> Result<(), Erro
     Ok(())
 }
 
-/// Merge Squirrel into Gemini settings.json.
-///
-/// Format: `{ "mcpServers": { "squirrel": {...} } }`
-pub fn merge_gemini_config(path: &Path, backup_path: &Path) -> Result<(), Error> {
-    // Gemini uses same JSON format as Claude
-    merge_json_mcp_config(path, backup_path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

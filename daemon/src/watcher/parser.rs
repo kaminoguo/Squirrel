@@ -401,6 +401,7 @@ pub fn parse_session(path: &Path) -> Result<ParsedSession, Error> {
 }
 
 /// Find all Claude Code session files for a project.
+#[allow(dead_code)] // For historical processing (ADR-011)
 pub fn find_sessions(claude_dir: &Path, project_path: Option<&Path>) -> Vec<std::path::PathBuf> {
     let projects_dir = claude_dir.join("projects");
     if !projects_dir.exists() {

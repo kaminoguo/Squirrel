@@ -16,7 +16,10 @@ use tokio::sync::{mpsc, Mutex};
 use crate::config::Config;
 use crate::error::Error;
 
+// Public API re-exports for IPC consumers
+#[allow(unused_imports)]
 pub use buffer::{EventBuffer, IngestChunkRequest, IngestChunkResponse, MemoryOp, MemoryOpKind};
+#[allow(unused_imports)]
 pub use parser::{Event as ParsedEvent, EventKind, Frustration, ParsedSession, Role};
 
 /// Log watcher for AI agent files.

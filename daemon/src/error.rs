@@ -22,6 +22,7 @@ pub enum Error {
     #[error("Project not initialized: {0}")]
     NotInitialized(String),
 
+    #[allow(dead_code)] // For sqrl forget (CLI-005)
     #[error("Memory not found: {0}")]
     MemoryNotFound(String),
 

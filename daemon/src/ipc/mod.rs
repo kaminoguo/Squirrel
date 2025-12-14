@@ -167,6 +167,7 @@ pub async fn send_flush(socket_path: &str) -> Result<(), Error> {
 }
 
 /// Send status request to daemon.
+#[allow(dead_code)] // For sqrl status (CLI-008)
 pub async fn send_status(socket_path: &str) -> Result<serde_json::Value, Error> {
     let stream = UnixStream::connect(socket_path).await?;
     let (reader, mut writer) = stream.into_split();
