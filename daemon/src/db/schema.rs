@@ -110,12 +110,12 @@ pub fn init_db(conn: &Connection) -> Result<(), Error> {
     )?;
 
     // Vector index for semantic search (requires sqlite-vec extension)
-    // Using 384 dimensions (common for sentence transformers like all-MiniLM-L6-v2)
+    // Using 1536 dimensions (text-embedding-3-small, per IPC-002 spec)
     conn.execute_batch(
         r#"
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
             memory_id TEXT PRIMARY KEY,
-            embedding FLOAT[384]
+            embedding FLOAT[1536]
         );
         "#,
     )?;
