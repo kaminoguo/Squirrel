@@ -22,6 +22,7 @@ from sqrl.embeddings import (
     embed_text,
 )
 from sqrl.memory_writer import MemoryWriter, MemoryWriterConfig
+from sqrl.parsers.base import Event, EventKind, Role
 
 
 class IPCError(Exception):
@@ -42,6 +43,20 @@ ERROR_SEARCH_PROJECT_NOT_INIT = -32010
 ERROR_SEARCH_EMPTY_QUERY = -32012
 ERROR_CR_MEMORY_EMPTY = -32020
 ERROR_CR_MEMORY_EVAL = -32021
+
+
+def _parse_event(data: dict) -> Event:
+    """Parse event dict to Event object."""
+    return Event(
+        ts=datetime.fromisoformat(data["ts"].replace("Z", "+00:00")),
+        role=Role(data.get("role", "assistant")),
+        kind=EventKind(data.get("kind", "message")),
+        summary=data.get("summary", ""),
+        tool_name=data.get("tool_name"),
+        file=data.get("file"),
+        raw_snippet=data.get("raw_snippet"),
+        is_error=data.get("is_error", False),
+    )
 
 
 @dataclass
@@ -82,9 +97,12 @@ class IngestChunkHandler:
         carry_state = params.get("carry_state")
         recent_memories = params.get("recent_memories", [])
 
+        # Parse raw event dicts to Event objects
+        parsed_events = [_parse_event(e) for e in events]
+
         try:
-            result = await self.writer.ingest(
-                events=events,
+            result = await self.writer.process_chunk(
+                events=parsed_events,
                 project_id=project_id,
                 owner_type=owner_type,
                 owner_id=owner_id,
