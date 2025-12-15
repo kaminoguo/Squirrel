@@ -20,12 +20,12 @@ from sqrl.memory_writer.models import MemoryKind, MemoryOp, MemoryTier
 class RetrievalConfig:
     """Configuration for retrieval.
 
-    embedding_model: ? (TBD via testing)
-    - Default uses OpenAI text-embedding-3-small as per spec
+    embedding_model: OpenAI text-embedding-3-small (1536 dimensions)
+    - Default uses text-embedding-3-small as per IPC-002 spec
     - Set SQRL_EMBEDDING_MODEL env var to override
     """
 
-    # [TBD via testing - default from spec]
+    # Default: text-embedding-3-small (1536 dimensions, per IPC-002)
     embedding_model: str | None = None
 
     def __post_init__(self):

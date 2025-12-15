@@ -53,10 +53,13 @@ pub async fn run() -> Result<(), Error> {
         }
     }
 
-    // Start IPC server
+    // Create flush trigger channel
+    let (flush_tx, flush_rx) = mpsc::channel::<()>(10);
+
+    // Start IPC server with flush trigger
     let socket_path = config.daemon.socket_path.clone();
     let ipc_handle = tokio::spawn(async move {
-        if let Err(e) = crate::ipc::run_server(&socket_path).await {
+        if let Err(e) = crate::ipc::run_server_with_flush(&socket_path, Some(flush_tx)).await {
             tracing::error!("IPC server error: {}", e);
         }
     });
@@ -89,7 +92,7 @@ pub async fn run() -> Result<(), Error> {
     });
 
     // Buffer processing loop - sends events to Memory Service
-    let buffer_handle = tokio::spawn(process_buffer_loop(buffer));
+    let buffer_handle = tokio::spawn(process_buffer_loop(buffer, flush_rx));
 
     // Run watcher loop
     let watcher_handle = tokio::spawn(async move {
@@ -121,11 +124,17 @@ pub async fn run() -> Result<(), Error> {
 }
 
 /// Process buffered events and send to Memory Service.
-async fn process_buffer_loop(buffer: Arc<Mutex<EventBuffer>>) {
+async fn process_buffer_loop(buffer: Arc<Mutex<EventBuffer>>, mut flush_rx: mpsc::Receiver<()>) {
     let mut interval = tokio::time::interval(Duration::from_secs(BUFFER_PROCESS_INTERVAL_SECS));
 
     loop {
-        interval.tick().await;
+        // Wait for either timer tick or flush signal
+        tokio::select! {
+            _ = interval.tick() => {}
+            Some(()) = flush_rx.recv() => {
+                tracing::info!("Flush signal received, processing immediately");
+            }
+        }
 
         // Get pending sessions
         let sessions: Vec<String> = {

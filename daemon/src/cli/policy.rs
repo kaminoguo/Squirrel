@@ -1,6 +1,8 @@
-//! Manage memory policy.
+//! Manage memory policy (CLI-011).
 
+use crate::config::Config;
 use crate::error::Error;
+use crate::ipc::send_reload_policy;
 
 /// Run policy command.
 pub async fn run(action: &str) -> Result<(), Error> {
@@ -32,9 +34,22 @@ pub async fn run(action: &str) -> Result<(), Error> {
         }
 
         "reload" => {
-            // TODO: Signal daemon to reload policy
-            println!("Policy reload not yet implemented.");
-            println!("Restart the daemon to apply policy changes.");
+            let config = Config::load()?;
+            let socket_path = &config.daemon.socket_path;
+
+            match send_reload_policy(socket_path).await {
+                Ok(result) => {
+                    if let Some(msg) = result.get("message") {
+                        println!("Policy reload: {}", msg);
+                    } else {
+                        println!("Policy reload signaled.");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to signal daemon: {}", e);
+                    eprintln!("Is the daemon running? Start it with 'sqrl daemon'");
+                }
+            }
         }
 
         _ => {

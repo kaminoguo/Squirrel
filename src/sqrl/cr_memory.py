@@ -29,17 +29,17 @@ class EvalResult(Enum):
 class PromotionRule:
     """POLICY-001: When to promote memories."""
 
-    min_opportunities: int = 5  # ? - needs tuning
-    min_use_ratio: float = 0.6  # ? - needs tuning
-    min_regret_hits: int = 2  # ? - needs tuning
+    min_opportunities: int = 5  # Require 5+ retrieval opportunities before evaluating
+    min_use_ratio: float = 0.6  # Used 60%+ of opportunities = valuable
+    min_regret_hits: int = 2  # At least 2 prevented errors/retries
 
 
 @dataclass
 class DeprecationRule:
     """POLICY-002: When to deprecate memories."""
 
-    min_opportunities: int = 10  # ? - needs tuning
-    max_use_ratio: float = 0.1  # ? - needs tuning
+    min_opportunities: int = 10  # Need more evidence before deprecating
+    max_use_ratio: float = 0.1  # Used <10% of opportunities = not useful
 
 
 @dataclass
@@ -53,8 +53,8 @@ class DecayRule:
 class RegretWeights:
     """POLICY-004: Weights for regret calculation."""
 
-    alpha_errors: float = 1.0  # ? - needs tuning
-    beta_retries: float = 0.5  # ? - needs tuning
+    alpha_errors: float = 1.0  # Full weight for prevented errors
+    beta_retries: float = 0.5  # Half weight for prevented retries (less severe)
 
 
 @dataclass
@@ -75,16 +75,16 @@ class Policy:
     promotion_default: PromotionRule = field(default_factory=PromotionRule)
     promotion_invariant: PromotionRule = field(
         default_factory=lambda: PromotionRule(
-            min_opportunities=3,  # ? - invariants promoted faster
-            min_use_ratio=0.5,  # ?
-            min_regret_hits=1,  # ?
+            min_opportunities=3,  # Invariants promoted faster (high-value)
+            min_use_ratio=0.5,  # Lower threshold for core rules
+            min_regret_hits=1,  # Single prevented error sufficient
         )
     )
     promotion_guard: PromotionRule = field(
         default_factory=lambda: PromotionRule(
-            min_opportunities=10,  # ? - guards need more evidence
-            min_use_ratio=0.3,  # ?
-            min_regret_hits=3,  # ?
+            min_opportunities=10,  # Guards need more evidence (safety)
+            min_use_ratio=0.3,  # Lower bar since guards are defensive
+            min_regret_hits=3,  # Multiple prevented errors required
         )
     )
 
@@ -92,14 +92,14 @@ class Policy:
     deprecation_default: DeprecationRule = field(default_factory=DeprecationRule)
     deprecation_guard: DeprecationRule = field(
         default_factory=lambda: DeprecationRule(
-            min_opportunities=20,  # ? - guards more tolerant
-            max_use_ratio=0.05,  # ?
+            min_opportunities=20,  # Guards more tolerant (safety margin)
+            max_use_ratio=0.05,  # Very low bar to keep safety guards
         )
     )
     deprecation_note: DeprecationRule = field(
         default_factory=lambda: DeprecationRule(
-            min_opportunities=5,  # ? - notes deprecate faster
-            max_use_ratio=0.2,  # ?
+            min_opportunities=5,  # Notes deprecate faster (less critical)
+            max_use_ratio=0.2,  # Higher threshold for low-value notes
         )
     )
 
@@ -357,8 +357,8 @@ class CRMemoryEvaluator:
             new_tier = memory.tier
             new_expires: Optional[datetime] = memory.expires_at
 
-            # Consider promoting to long_term
-            if memory.status == "provisional" and use_ratio >= 0.8:  # ? - threshold for long_term
+            # Consider promoting to long_term (80%+ usage = very valuable)
+            if memory.status == "provisional" and use_ratio >= 0.8:
                 new_tier = "long_term"
                 if self.policy.ttl.remove_on_long_term:
                     new_expires = None  # Remove TTL for long_term

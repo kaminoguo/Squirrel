@@ -8,9 +8,12 @@ use std::path::{Path, PathBuf};
 use crate::db::Database;
 use crate::error::Error;
 use crate::ipc::{send_ingest_chunk, MEMORY_SERVICE_SOCKET};
-use crate::watcher::buffer::IngestChunkRequest;
+use crate::watcher::buffer::{IngestChunkRequest, RecentMemory};
 use crate::watcher::commit::commit_ops;
 use crate::watcher::parser::{find_sessions, parse_session, ParsedSession};
+
+/// Maximum number of recent memories to include for context.
+const MAX_RECENT_MEMORIES: usize = 20;
 
 /// Default chunk size for historical processing.
 const CHUNK_SIZE: usize = 50;
@@ -123,6 +126,29 @@ async fn check_memory_service() -> bool {
     }
 }
 
+/// Query recent memories for context.
+///
+/// Returns the most recently updated memories for a project, converted
+/// to RecentMemory format for the Memory Writer.
+fn query_recent_memories(db: &Database, project_id: &str) -> Vec<RecentMemory> {
+    match db.get_active_memories(project_id, MAX_RECENT_MEMORIES) {
+        Ok(memories) => memories
+            .into_iter()
+            .map(|m| RecentMemory {
+                id: m.id,
+                kind: m.kind,
+                tier: m.tier,
+                key: m.key,
+                text: m.text,
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!("Failed to query recent memories: {}", e);
+            Vec::new()
+        }
+    }
+}
+
 /// Process a single session's events.
 async fn process_session(
     session: &ParsedSession,
@@ -149,6 +175,18 @@ async fn process_session(
         let chunk_events = events[chunk_start..chunk_end].to_vec();
         let chunk_size = chunk_events.len();
 
+        // Query recent memories for context (only for first chunk to avoid repeated queries)
+        let recent_memories = if chunk_index == 0 {
+            let mems = query_recent_memories(db, project_id);
+            if !mems.is_empty() {
+                Some(mems)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let request = IngestChunkRequest {
             project_id: project_id.to_string(),
             owner_type: owner_type.to_string(),
@@ -156,7 +194,7 @@ async fn process_session(
             chunk_index,
             events: chunk_events,
             carry_state: carry_state.take(),
-            recent_memories: None, // TODO: Query recent memories for context
+            recent_memories,
         };
 
         // Send to Memory Service

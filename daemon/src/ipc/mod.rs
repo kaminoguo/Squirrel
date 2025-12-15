@@ -3,11 +3,17 @@
 //! The daemon communicates with the Python Memory Service over Unix socket
 //! using JSON-RPC 2.0 protocol.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::{mpsc, Mutex};
 
 use crate::error::Error;
+
+/// Flush trigger channel sender type.
+pub type FlushTrigger = mpsc::Sender<()>;
 
 /// JSON-RPC request.
 #[derive(Debug, Serialize, Deserialize)]
@@ -39,19 +45,31 @@ pub struct JsonRpcError {
     pub data: Option<serde_json::Value>,
 }
 
-/// Run IPC server for daemon commands.
+/// Run IPC server for daemon commands (without flush trigger).
+#[allow(dead_code)]
 pub async fn run_server(socket_path: &str) -> Result<(), Error> {
+    run_server_with_flush(socket_path, None).await
+}
+
+/// Run IPC server with optional flush trigger.
+pub async fn run_server_with_flush(
+    socket_path: &str,
+    flush_trigger: Option<FlushTrigger>,
+) -> Result<(), Error> {
     // Remove existing socket
     let _ = std::fs::remove_file(socket_path);
 
     let listener = UnixListener::bind(socket_path)?;
     tracing::info!("IPC server listening on {}", socket_path);
 
+    let flush_trigger = flush_trigger.map(|t| Arc::new(Mutex::new(t)));
+
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
+                let flush_trigger = flush_trigger.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream).await {
+                    if let Err(e) = handle_connection(stream, flush_trigger).await {
                         tracing::error!("Connection error: {}", e);
                     }
                 });
@@ -63,7 +81,10 @@ pub async fn run_server(socket_path: &str) -> Result<(), Error> {
     }
 }
 
-async fn handle_connection(stream: UnixStream) -> Result<(), Error> {
+async fn handle_connection(
+    stream: UnixStream,
+    flush_trigger: Option<Arc<Mutex<FlushTrigger>>>,
+) -> Result<(), Error> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -95,7 +116,7 @@ async fn handle_connection(stream: UnixStream) -> Result<(), Error> {
             }
         };
 
-        let response = handle_request(&request).await;
+        let response = handle_request(&request, flush_trigger.clone()).await;
         let response_json = serde_json::to_string(&response)?;
         writer.write_all(response_json.as_bytes()).await?;
         writer.write_all(b"\n").await?;
@@ -104,17 +125,34 @@ async fn handle_connection(stream: UnixStream) -> Result<(), Error> {
     Ok(())
 }
 
-async fn handle_request(request: &JsonRpcRequest) -> JsonRpcResponse {
+async fn handle_request(
+    request: &JsonRpcRequest,
+    flush_trigger: Option<Arc<Mutex<FlushTrigger>>>,
+) -> JsonRpcResponse {
     let result = match request.method.as_str() {
         "flush" => {
             tracing::info!("Flush requested");
-            // TODO: Trigger episode processing
+            // Trigger episode processing if flush channel is available
+            if let Some(trigger) = flush_trigger {
+                let tx = trigger.lock().await;
+                if let Err(e) = tx.send(()).await {
+                    tracing::warn!("Failed to send flush signal: {}", e);
+                }
+            }
             Ok(serde_json::json!({"status": "ok"}))
         }
         "status" => Ok(serde_json::json!({
             "status": "running",
             "version": env!("CARGO_PKG_VERSION"),
         })),
+        "reload_policy" => {
+            tracing::info!("Policy reload requested");
+            // v1: Log the request. Full implementation in v2 would signal Memory Service.
+            // For now, the daemon doesn't cache policy - it's handled by Memory Service.
+            Ok(
+                serde_json::json!({"status": "ok", "message": "Policy reload signaled (Memory Service will pick up changes on next evaluation)"}),
+            )
+        }
         _ => Err(JsonRpcError {
             code: -32601,
             message: format!("Method not found: {}", request.method),
@@ -278,6 +316,34 @@ pub async fn send_status(socket_path: &str) -> Result<serde_json::Value, Error> 
         jsonrpc: "2.0".to_string(),
         id: serde_json::json!(1),
         method: "status".to_string(),
+        params: serde_json::Value::Null,
+    };
+
+    let request_json = serde_json::to_string(&request)?;
+    writer.write_all(request_json.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+
+    let mut reader = BufReader::new(reader);
+    let mut response_line = String::new();
+    reader.read_line(&mut response_line).await?;
+
+    let response: JsonRpcResponse = serde_json::from_str(&response_line)?;
+    if let Some(error) = response.error {
+        return Err(Error::ipc(error.message));
+    }
+
+    Ok(response.result.unwrap_or(serde_json::Value::Null))
+}
+
+/// Send reload_policy request to daemon.
+pub async fn send_reload_policy(socket_path: &str) -> Result<serde_json::Value, Error> {
+    let stream = UnixStream::connect(socket_path).await?;
+    let (reader, mut writer) = stream.into_split();
+
+    let request = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: serde_json::json!(1),
+        method: "reload_policy".to_string(),
         params: serde_json::Value::Null,
     };
 

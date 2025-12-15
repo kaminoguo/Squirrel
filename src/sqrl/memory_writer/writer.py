@@ -22,13 +22,14 @@ class MemoryWriterConfig:
     - Examples: 'litellm:gpt-4o', 'litellm:anthropic/claude-3-5-sonnet'
     - See https://docs.litellm.ai/docs/providers for model identifiers
 
-    max_memories_per_episode: ? (TBD via testing)
+    max_memories_per_episode: Default 5. Limits noise while capturing key learnings.
+    - Set SQRL_MAX_MEMORIES_PER_EPISODE env var to override
     """
 
     # Format: 'litellm:<model>' e.g., 'litellm:gpt-4o'
     model: str | None = None
-    # [TBD via testing]
-    max_memories_per_episode: int | None = None
+    # Default 5: balances signal vs noise per episode
+    max_memories_per_episode: int = 5
 
     def __post_init__(self):
         # Model from env var (required)
@@ -41,7 +42,7 @@ class MemoryWriterConfig:
         # Prepend 'litellm:' for PydanticAI to use LiteLLM backend
         self.model = f"litellm:{env_model}"
 
-        # max_memories_per_episode from env or None (TBD)
+        # max_memories_per_episode from env or default (5)
         env_max = os.getenv("SQRL_MAX_MEMORIES_PER_EPISODE")
         if env_max:
             self.max_memories_per_episode = int(env_max)
@@ -58,8 +59,8 @@ class ChunkContext:
     chunk_index: int
     carry_state: str
     recent_memories: str
-    # [TBD via testing. None = no limit specified]
-    max_memories_per_episode: int | None
+    # Default 5 per episode
+    max_memories_per_episode: int
 
 
 class MemoryWriter:
@@ -86,14 +87,8 @@ class MemoryWriter:
 
         @agent.system_prompt
         def build_system_prompt(ctx: RunContext[ChunkContext]) -> str:
-            # Handle None case for max_memories_per_episode (TBD in spec)
-            max_memories_str = (
-                str(ctx.deps.max_memories_per_episode)
-                if ctx.deps.max_memories_per_episode is not None
-                else "(no limit - TBD)"
-            )
             return SYSTEM_PROMPT.format(
-                max_memories_per_episode=max_memories_str,
+                max_memories_per_episode=ctx.deps.max_memories_per_episode,
             )
 
         return agent
@@ -110,12 +105,6 @@ class MemoryWriter:
 
     def _build_user_prompt(self, ctx: ChunkContext) -> str:
         """Build the user prompt from context."""
-        # Handle None case for max_memories_per_episode (TBD in spec)
-        max_memories_str = (
-            str(ctx.max_memories_per_episode)
-            if ctx.max_memories_per_episode is not None
-            else "(no limit - TBD)"
-        )
         return USER_PROMPT_TEMPLATE.format(
             project_id=ctx.project_id,
             owner_type=ctx.owner_type,
@@ -124,7 +113,7 @@ class MemoryWriter:
             recent_memories=ctx.recent_memories,
             chunk_index=ctx.chunk_index,
             events=ctx.events_json,
-            max_memories_per_episode=max_memories_str,
+            max_memories_per_episode=ctx.max_memories_per_episode,
         )
 
     async def process_chunk(

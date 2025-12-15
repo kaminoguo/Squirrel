@@ -18,7 +18,6 @@ from sqrl.parsers.base import (
     EventKind,
     Frustration,
     Role,
-    TestStatus,
 )
 
 # Frustration detection patterns (rule-based)
@@ -52,6 +51,10 @@ ERROR_PATTERNS = [
 
 # Max length for raw snippets (truncate longer content)
 MAX_SNIPPET_LENGTH = 200
+
+# Task boundary detection
+TASK_BOUNDARY_GAP_MINUTES = 30  # Time gap indicating new task
+MIN_EVENTS_PER_EPISODE = 3  # Minimum events to form an episode
 
 
 def detect_frustration(text: str) -> Frustration:
@@ -113,6 +116,173 @@ def summarize_content(content: list[dict]) -> tuple[str, Optional[str], Optional
     return " ".join(summary_parts) or "(empty)", tool_name, file_path
 
 
+def detect_retry_loops(events: list[Event]) -> int:
+    """
+    Detect retry loops in events.
+
+    A retry loop is when the same error occurs multiple times,
+    indicating repeated failed attempts at the same task.
+    """
+    retry_count = 0
+    recent_errors: list[str] = []
+
+    for event in events:
+        if event.is_error and event.summary:
+            # Normalize error for comparison (first 50 chars)
+            error_key = event.summary[:50].lower()
+
+            # Check if similar error occurred recently
+            for prev_error in recent_errors[-5:]:  # Look at last 5 errors
+                if _similar_errors(error_key, prev_error):
+                    retry_count += 1
+                    break
+
+            recent_errors.append(error_key)
+
+    return retry_count
+
+
+def _similar_errors(err1: str, err2: str) -> bool:
+    """Check if two error strings are similar."""
+    # Simple similarity: share significant words
+    words1 = set(err1.split())
+    words2 = set(err2.split())
+    common = words1 & words2
+    # Similar if they share more than 30% of words
+    if not words1 or not words2:
+        return False
+    return len(common) / min(len(words1), len(words2)) > 0.3
+
+
+def find_task_boundaries(events: list[Event]) -> list[int]:
+    """
+    Find indices where new tasks begin.
+
+    Task boundaries are detected by:
+    1. Large time gaps (> 30 minutes)
+    2. User message after long assistant tool sequence
+
+    Returns list of indices where new episodes should start.
+    """
+    if len(events) < 2:
+        return [0]
+
+    boundaries = [0]  # First event always starts an episode
+    from datetime import timedelta
+
+    gap_threshold = timedelta(minutes=TASK_BOUNDARY_GAP_MINUTES)
+
+    for i in range(1, len(events)):
+        prev_event = events[i - 1]
+        curr_event = events[i]
+
+        # Check time gap
+        time_gap = curr_event.ts - prev_event.ts
+        if time_gap > gap_threshold:
+            # Large gap indicates new task
+            boundaries.append(i)
+            continue
+
+        # Check for new user message after tool sequence
+        if curr_event.role == Role.USER and curr_event.kind == EventKind.MESSAGE:
+            # Count consecutive assistant events before this
+            assistant_count = 0
+            for j in range(i - 1, -1, -1):
+                if events[j].role == Role.ASSISTANT:
+                    assistant_count += 1
+                else:
+                    break
+
+            # If there were many assistant actions, this might be a new task
+            if assistant_count >= 10:
+                boundaries.append(i)
+
+    return boundaries
+
+
+def split_into_episodes(
+    events: list[Event],
+    session_id: str,
+    project_id: str,
+) -> list[Episode]:
+    """Split events into multiple episodes based on task boundaries."""
+    if not events:
+        return []
+
+    boundaries = find_task_boundaries(events)
+
+    # Add end marker
+    boundaries.append(len(events))
+
+    episodes = []
+    for i in range(len(boundaries) - 1):
+        start_idx = boundaries[i]
+        end_idx = boundaries[i + 1]
+
+        episode_events = events[start_idx:end_idx]
+
+        # Skip tiny episodes (merge with previous if possible)
+        if len(episode_events) < MIN_EVENTS_PER_EPISODE:
+            if episodes:
+                # Merge with previous episode
+                prev_episode = episodes[-1]
+                merged_events = prev_episode.events + episode_events
+                episodes[-1] = Episode(
+                    session_id=prev_episode.session_id,
+                    project_id=prev_episode.project_id,
+                    start_ts=prev_episode.start_ts,
+                    end_ts=episode_events[-1].ts,
+                    events=merged_events,
+                    stats=_compute_stats(merged_events),
+                )
+            continue
+
+        episode = Episode(
+            session_id=f"{session_id}_{i}",
+            project_id=project_id,
+            start_ts=episode_events[0].ts,
+            end_ts=episode_events[-1].ts,
+            events=episode_events,
+            stats=_compute_stats(episode_events),
+        )
+        episodes.append(episode)
+
+    # If no episodes created, make one from all events
+    if not episodes and events:
+        episodes.append(
+            Episode(
+                session_id=session_id,
+                project_id=project_id,
+                start_ts=events[0].ts,
+                end_ts=events[-1].ts,
+                events=events,
+                stats=_compute_stats(events),
+            )
+        )
+
+    return episodes
+
+
+def _compute_stats(events: list[Event]) -> EpisodeStats:
+    """Compute episode statistics from events."""
+    error_count = sum(1 for e in events if e.is_error)
+    retry_loops = detect_retry_loops(events)
+
+    # Find max frustration
+    max_frustration = Frustration.NONE
+    for event in events:
+        if event.role == Role.USER and event.kind == EventKind.MESSAGE:
+            frustration = detect_frustration(event.summary)
+            if frustration.value > max_frustration.value:
+                max_frustration = frustration
+
+    return EpisodeStats(
+        error_count=error_count,
+        retry_loops=retry_loops,
+        user_frustration=max_frustration,
+    )
+
+
 class ClaudeCodeParser(BaseParser):
     """Parser for Claude Code session logs."""
 
@@ -153,8 +323,6 @@ class ClaudeCodeParser(BaseParser):
     def parse_session(self, session_path: Path) -> list[Episode]:
         """Parse a session file into episodes."""
         events: list[Event] = []
-        max_frustration = Frustration.NONE
-        error_count = 0
         session_id = session_path.stem
         project_id = session_path.parent.name
 
@@ -220,16 +388,7 @@ class ClaudeCodeParser(BaseParser):
                             result_text = str(block.get("content", ""))
                             if is_error_result(result_text):
                                 is_error = True
-                                error_count += 1
                                 break
-
-                # Detect frustration in user messages
-                if role == Role.USER and kind == EventKind.MESSAGE:
-                    for block in content:
-                        if block.get("type") == "text":
-                            frustration = detect_frustration(block.get("text", ""))
-                            if frustration.value > max_frustration.value:
-                                max_frustration = frustration
 
                 # Create event
                 event = Event(
@@ -246,19 +405,5 @@ class ClaudeCodeParser(BaseParser):
         if not events:
             return []
 
-        # Create single episode from session
-        # TODO: Split into multiple episodes based on task boundaries
-        episode = Episode(
-            session_id=session_id,
-            project_id=project_id,
-            start_ts=events[0].ts,
-            end_ts=events[-1].ts,
-            events=events,
-            stats=EpisodeStats(
-                error_count=error_count,
-                retry_loops=0,  # TODO: detect retry loops
-                user_frustration=max_frustration,
-            ),
-        )
-
-        return [episode]
+        # Split session into episodes based on task boundaries
+        return split_into_episodes(events, session_id, project_id)
