@@ -24,48 +24,51 @@ async fn main() -> Result<(), error::Error> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { skip_history } => {
+        None => {
+            cli::setup::run().await?;
+        }
+        Some(Commands::Init { skip_history }) => {
             cli::init::run(skip_history).await?;
         }
-        Commands::Search { query, kind, tier } => {
+        Some(Commands::Search { query, kind, tier }) => {
             cli::search::run(&query, kind.as_deref(), tier.as_deref()).await?;
         }
-        Commands::Forget { id, query, confirm } => {
+        Some(Commands::Forget { id, query, confirm }) => {
             cli::forget::run(id.as_deref(), query.as_deref(), confirm).await?;
         }
-        Commands::Export { kind, project } => {
+        Some(Commands::Export { kind, project }) => {
             cli::export::run(kind.as_deref(), project).await?;
         }
-        Commands::Import { file } => {
+        Some(Commands::Import { file }) => {
             cli::import::run(&file).await?;
         }
-        Commands::Status => {
+        Some(Commands::Status) => {
             cli::status::run().await?;
         }
-        Commands::Config { key, value } => {
+        Some(Commands::Config { key, value }) => {
             cli::config::run(key.as_deref(), value.as_deref()).await?;
         }
-        Commands::Sync => {
+        Some(Commands::Sync) => {
             cli::sync::run().await?;
         }
-        Commands::Flush => {
+        Some(Commands::Flush) => {
             cli::flush::run().await?;
         }
-        Commands::Policy { action } => {
+        Some(Commands::Policy { action }) => {
             cli::policy::run(&action).await?;
         }
-        Commands::Mcp => {
+        Some(Commands::Mcp) => {
             cli::mcp::run().await?;
         }
-        Commands::Daemon => {
+        Some(Commands::Daemon) => {
             cli::daemon::run().await?;
         }
-        Commands::Clean {
+        Some(Commands::Clean {
             project,
             global,
             all,
             force,
-        } => {
+        }) => {
             cli::clean::run(project, global, all, force).await?;
         }
     }

@@ -16,6 +16,7 @@ pub mod mcp;
 pub mod mcp_config;
 pub mod policy;
 pub mod search;
+pub mod setup;
 pub mod status;
 pub mod sync;
 
@@ -27,7 +28,7 @@ use clap::{Parser, Subcommand};
 #[command(version, about, long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand)]

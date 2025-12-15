@@ -154,28 +154,26 @@ impl Config {
         Ok(())
     }
 
-    /// Path to config file
-    pub fn path() -> PathBuf {
+    /// Path to global sqrl directory (~/.sqrl/)
+    pub fn global_dir() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".sqrl")
-            .join("config.toml")
+    }
+
+    /// Path to config file
+    pub fn path() -> PathBuf {
+        Self::global_dir().join("config.toml")
     }
 
     /// Path to global database
     pub fn global_db_path() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".sqrl")
-            .join("squirrel.db")
+        Self::global_dir().join("squirrel.db")
     }
 
     /// Path to projects registry
     pub fn projects_path() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".sqrl")
-            .join("projects.json")
+        Self::global_dir().join("projects.json")
     }
 }
 
