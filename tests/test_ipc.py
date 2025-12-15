@@ -312,8 +312,9 @@ class TestIngestChunkHandler:
     @pytest.mark.asyncio
     async def test_ingest_empty_chunk(self, monkeypatch):
         """Empty chunk raises error."""
-        # Set required env var
-        monkeypatch.setenv("SQRL_STRONG_MODEL", "test-model")
+        # Set required env vars (format: provider/model)
+        monkeypatch.setenv("SQRL_STRONG_MODEL", "openrouter/test-model")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
         handler = IngestChunkHandler()
 
@@ -328,7 +329,8 @@ class TestIngestChunkHandler:
     @pytest.mark.asyncio
     async def test_ingest_missing_project(self, monkeypatch):
         """Missing project raises error."""
-        monkeypatch.setenv("SQRL_STRONG_MODEL", "test-model")
+        monkeypatch.setenv("SQRL_STRONG_MODEL", "openrouter/test-model")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
         handler = IngestChunkHandler()
 

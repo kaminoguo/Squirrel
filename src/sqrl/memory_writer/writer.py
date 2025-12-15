@@ -2,33 +2,36 @@
 
 import json
 import os
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.openai import OpenAIChatModel
 
 from sqrl.chunking import events_to_json
 from sqrl.memory_writer.models import MemoryWriterOutput
 from sqrl.memory_writer.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 from sqrl.parsers.base import Event
 
+# Supported PydanticAI providers
+SUPPORTED_PROVIDERS = {"openrouter", "openai", "anthropic", "ollama", "together", "fireworks"}
+
 
 @dataclass
 class MemoryWriterConfig:
     """Configuration for Memory Writer.
 
-    Model format: 'litellm:<litellm-model-id>'
-    - PydanticAI uses 'litellm:' prefix to route to LiteLLM backend
-    - Examples: 'litellm:gpt-4o', 'litellm:anthropic/claude-3-5-sonnet'
-    - See https://docs.litellm.ai/docs/providers for model identifiers
+    Model format: 'provider/model-name'
+    - Examples: 'openrouter/anthropic/claude-3-haiku', 'openai/gpt-4o'
+    - For OpenRouter: 'openrouter/<provider>/<model>'
+    - Set SQRL_STRONG_MODEL env var
 
     max_memories_per_episode: Default 5. Limits noise while capturing key learnings.
     - Set SQRL_MAX_MEMORIES_PER_EPISODE env var to override
     """
 
-    # Format: 'litellm:<model>' e.g., 'litellm:gpt-4o'
-    model: str | None = None
-    # Default 5: balances signal vs noise per episode
+    provider: str = field(default="")
+    model_name: str = field(default="")
     max_memories_per_episode: int = 5
 
     def __post_init__(self):
@@ -37,15 +40,34 @@ class MemoryWriterConfig:
         if not env_model:
             raise ValueError(
                 "SQRL_STRONG_MODEL env var required. "
-                "Format: LiteLLM model ID (e.g., 'gpt-4o', 'anthropic/claude-3-5-sonnet')"
+                "Format: 'provider/model' (e.g., 'openrouter/anthropic/claude-3-haiku')"
             )
-        # Prepend 'litellm:' for PydanticAI to use LiteLLM backend
-        self.model = f"litellm:{env_model}"
+
+        # Parse provider/model format
+        parts = env_model.split("/", 1)
+        if len(parts) < 2:
+            raise ValueError(
+                f"Invalid model format: {env_model}. "
+                "Expected 'provider/model' (e.g., 'openrouter/anthropic/claude-3-haiku')"
+            )
+
+        self.provider = parts[0]
+        self.model_name = parts[1]
+
+        if self.provider not in SUPPORTED_PROVIDERS:
+            raise ValueError(
+                f"Unsupported provider: {self.provider}. "
+                f"Supported: {', '.join(sorted(SUPPORTED_PROVIDERS))}"
+            )
 
         # max_memories_per_episode from env or default (5)
         env_max = os.getenv("SQRL_MAX_MEMORIES_PER_EPISODE")
         if env_max:
             self.max_memories_per_episode = int(env_max)
+
+    def create_model(self) -> Any:
+        """Create PydanticAI model instance."""
+        return OpenAIChatModel(model_name=self.model_name, provider=self.provider)
 
 
 @dataclass
@@ -79,8 +101,9 @@ class MemoryWriter:
 
     def _create_agent(self) -> Agent[ChunkContext, MemoryWriterOutput]:
         """Create PydanticAI agent with structured output."""
+        model = self.config.create_model()
         agent = Agent(
-            self.config.model,
+            model,
             deps_type=ChunkContext,
             output_type=MemoryWriterOutput,
         )
