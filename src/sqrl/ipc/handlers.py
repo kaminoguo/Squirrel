@@ -258,11 +258,16 @@ class SearchMemoriesHandler:
     Handler for IPC-004: search_memories.
 
     Note: In production, search is handled by Rust daemon with sqlite-vec.
-    This handler is for testing/development with Python-side search.
+    This handler provides a Python-side implementation for testing/development
+    or as a fallback when Rust daemon is unavailable.
     """
+
+    search_fn: Optional[callable] = None
+    _warned_no_search_fn: bool = False
 
     def __init__(self, search_fn: Optional[callable] = None):
         self.search_fn = search_fn
+        self._warned_no_search_fn = False
 
     async def __call__(self, params: dict) -> dict:
         """
@@ -272,8 +277,12 @@ class SearchMemoriesHandler:
             params: Request params with project_id, query, top_k, filters
 
         Returns:
-            Dict with results array
+            Dict with results array and metadata
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         query = params.get("query", "")
         if not query:
             raise IPCError(ERROR_SEARCH_EMPTY_QUERY, "Empty query")
@@ -293,10 +302,27 @@ class SearchMemoriesHandler:
                 top_k=top_k,
                 filters=filters,
             )
-            return {"results": results}
+            return {
+                "results": results,
+                "search_backend": "python",
+                "warning": None,
+            }
 
-        # Otherwise return empty (search handled by Rust daemon)
-        return {"results": []}
+        # Log warning once about missing search function
+        if not self._warned_no_search_fn:
+            logger.warning(
+                "SearchMemoriesHandler: No search_fn configured. "
+                "In production, search should be handled by Rust daemon with sqlite-vec. "
+                "Returning empty results."
+            )
+            self._warned_no_search_fn = True
+
+        # Return empty with warning
+        return {
+            "results": [],
+            "search_backend": "none",
+            "warning": "Search not configured. Use Rust daemon for production search.",
+        }
 
 
 @dataclass

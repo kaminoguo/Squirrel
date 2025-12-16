@@ -16,6 +16,30 @@ from sqrl.parsers.base import Event
 # Supported PydanticAI providers
 SUPPORTED_PROVIDERS = {"openrouter", "openai", "anthropic", "ollama", "together", "fireworks"}
 
+# Default model when SQRL_STRONG_MODEL is not set
+# Using DeepSeek R1 distilled model - free on OpenRouter with strong reasoning
+# Alternatives:
+#   - "openrouter/deepseek/deepseek-chat-v2.5" (free, 128K context)
+#   - "openrouter/anthropic/claude-3.5-haiku" ($0.80/$4 per M tokens, best for JSON)
+#   - "openrouter/deepseek/deepseek-r1" ($0.30/$1.20 per M tokens, advanced reasoning)
+#   - "anthropic/claude-3-5-haiku-latest" (direct Anthropic API)
+DEFAULT_STRONG_MODEL = "openrouter/deepseek/deepseek-r1-distill-qwen-32b"
+
+# Recommended models by use case (for documentation)
+RECOMMENDED_MODELS = {
+    "free_best": "openrouter/deepseek/deepseek-r1-distill-qwen-32b",  # Free, 64K, strong reasoning
+    "free_long_context": "openrouter/deepseek/deepseek-chat-v2.5",  # Free, 128K context
+    "budget": "openrouter/deepseek/deepseek-r1-0528-qwen3-8b",  # $0.02/$0.10, 33K
+    "json_best": "openrouter/anthropic/claude-3.5-haiku",  # $0.80/$4, 200K, best structured output
+    "reasoning": "openrouter/deepseek/deepseek-r1",  # $0.30/$1.20, 164K, o1-level reasoning
+}
+
+
+class ConfigurationError(Exception):
+    """Raised when configuration is invalid or missing."""
+
+    pass
+
 
 @dataclass
 class MemoryWriterConfig:
@@ -24,7 +48,7 @@ class MemoryWriterConfig:
     Model format: 'provider/model-name'
     - Examples: 'openrouter/anthropic/claude-3-haiku', 'openai/gpt-4o'
     - For OpenRouter: 'openrouter/<provider>/<model>'
-    - Set SQRL_STRONG_MODEL env var
+    - Set SQRL_STRONG_MODEL env var to override default
 
     max_memories_per_episode: Default 5. Limits noise while capturing key learnings.
     - Set SQRL_MAX_MEMORIES_PER_EPISODE env var to override
@@ -33,29 +57,29 @@ class MemoryWriterConfig:
     provider: str = field(default="")
     model_name: str = field(default="")
     max_memories_per_episode: int = 5
+    _initialized: bool = field(default=False, repr=False)
 
     def __post_init__(self):
-        # Model from env var (required)
-        env_model = os.getenv("SQRL_STRONG_MODEL")
-        if not env_model:
-            raise ValueError(
-                "SQRL_STRONG_MODEL env var required. "
-                "Format: 'provider/model' (e.g., 'openrouter/anthropic/claude-3-haiku')"
-            )
+        # Skip if already initialized (allows explicit provider/model_name)
+        if self._initialized:
+            return
+
+        # Model from env var or default
+        env_model = os.getenv("SQRL_STRONG_MODEL", DEFAULT_STRONG_MODEL)
 
         # Parse provider/model format
         parts = env_model.split("/", 1)
         if len(parts) < 2:
-            raise ValueError(
+            raise ConfigurationError(
                 f"Invalid model format: {env_model}. "
-                "Expected 'provider/model' (e.g., 'openrouter/anthropic/claude-3-haiku')"
+                "Expected 'provider/model' (e.g., 'openai/gpt-4o-mini')"
             )
 
         self.provider = parts[0]
         self.model_name = parts[1]
 
         if self.provider not in SUPPORTED_PROVIDERS:
-            raise ValueError(
+            raise ConfigurationError(
                 f"Unsupported provider: {self.provider}. "
                 f"Supported: {', '.join(sorted(SUPPORTED_PROVIDERS))}"
             )
@@ -63,7 +87,26 @@ class MemoryWriterConfig:
         # max_memories_per_episode from env or default (5)
         env_max = os.getenv("SQRL_MAX_MEMORIES_PER_EPISODE")
         if env_max:
-            self.max_memories_per_episode = int(env_max)
+            try:
+                self.max_memories_per_episode = int(env_max)
+            except ValueError:
+                raise ConfigurationError(
+                    f"Invalid SQRL_MAX_MEMORIES_PER_EPISODE: {env_max}. Must be an integer."
+                )
+
+        self._initialized = True
+
+    @classmethod
+    def from_explicit(
+        cls, provider: str, model_name: str, max_memories_per_episode: int = 5
+    ) -> "MemoryWriterConfig":
+        """Create config with explicit values (ignores env vars)."""
+        config = cls.__new__(cls)
+        config.provider = provider
+        config.model_name = model_name
+        config.max_memories_per_episode = max_memories_per_episode
+        config._initialized = True
+        return config
 
     def create_model(self) -> Any:
         """Create PydanticAI model instance."""

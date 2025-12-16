@@ -7,9 +7,14 @@ from sqrl.memory_writer.models import (
     MemoryWriterOutput,
     OpType,
 )
-from sqrl.memory_writer.writer import MemoryWriter, MemoryWriterConfig
+from sqrl.memory_writer.writer import (
+    ConfigurationError,
+    MemoryWriter,
+    MemoryWriterConfig,
+)
 
 __all__ = [
+    "ConfigurationError",
     "MemoryWriter",
     "MemoryWriterConfig",
     "MemoryWriterOutput",

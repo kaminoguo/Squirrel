@@ -5,12 +5,17 @@ Handles text embedding generation for memory storage and retrieval.
 Uses LiteLLM for provider-agnostic embeddings.
 """
 
+import asyncio
+import logging
 import os
 import struct
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Optional
 
 import litellm
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingError(Exception):
@@ -34,10 +39,16 @@ class EmbeddingConfig:
     Attributes:
         model: Embedding model to use (default: text-embedding-3-small)
         dimensions: Expected embedding dimensions (default: 1536)
+        max_retries: Maximum retry attempts on failure (default: 3)
+        retry_delay: Base delay between retries in seconds (default: 1.0)
+        retry_backoff: Backoff multiplier for retry delay (default: 2.0)
     """
 
     model: str = "text-embedding-3-small"
     dimensions: int = 1536
+    max_retries: int = 3
+    retry_delay: float = 1.0
+    retry_backoff: float = 2.0
 
     @classmethod
     def from_env(cls) -> "EmbeddingConfig":
@@ -45,7 +56,26 @@ class EmbeddingConfig:
         return cls(
             model=os.getenv("SQRL_EMBEDDING_MODEL", "text-embedding-3-small"),
             dimensions=int(os.getenv("SQRL_EMBEDDING_DIMS", "1536")),
+            max_retries=int(os.getenv("SQRL_EMBEDDING_MAX_RETRIES", "3")),
+            retry_delay=float(os.getenv("SQRL_EMBEDDING_RETRY_DELAY", "1.0")),
+            retry_backoff=float(os.getenv("SQRL_EMBEDDING_RETRY_BACKOFF", "2.0")),
         )
+
+
+def _is_retryable_error(e: Exception) -> bool:
+    """Check if an error is retryable (transient network/API issues)."""
+    error_str = str(e).lower()
+    retryable_patterns = [
+        "rate limit",
+        "timeout",
+        "connection",
+        "temporarily unavailable",
+        "503",
+        "502",
+        "500",
+        "429",
+    ]
+    return any(pattern in error_str for pattern in retryable_patterns)
 
 
 async def embed_text(
@@ -53,7 +83,7 @@ async def embed_text(
     config: Optional[EmbeddingConfig] = None,
 ) -> list[float]:
     """
-    Generate embedding for text (IPC-002).
+    Generate embedding for text (IPC-002) with retry logic.
 
     Args:
         text: Text to embed (must not be empty)
@@ -63,21 +93,44 @@ async def embed_text(
         1536-dim float32 vector
 
     Raises:
-        EmbeddingError: With code -32040 if text empty, -32041 if API fails
+        EmbeddingError: With code -32040 if text empty, -32041 if API fails after retries
     """
     if not text or not text.strip():
         raise EmbeddingError(ERROR_EMPTY_TEXT, "Empty text")
 
     cfg = config or EmbeddingConfig.from_env()
 
-    try:
-        response = await litellm.aembedding(
-            model=cfg.model,
-            input=text,
-        )
-        return response.data[0]["embedding"]
-    except Exception as e:
-        raise EmbeddingError(ERROR_EMBEDDING_FAILED, f"Embedding error: {e}") from e
+    last_error: Optional[Exception] = None
+    delay = cfg.retry_delay
+
+    for attempt in range(cfg.max_retries + 1):
+        try:
+            response = await litellm.aembedding(
+                model=cfg.model,
+                input=text,
+            )
+            return response.data[0]["embedding"]
+        except Exception as e:
+            last_error = e
+
+            # Don't retry on non-retryable errors
+            if not _is_retryable_error(e):
+                logger.warning(f"Embedding failed (non-retryable): {e}")
+                break
+
+            # Don't wait after the last attempt
+            if attempt < cfg.max_retries:
+                logger.warning(
+                    f"Embedding attempt {attempt + 1}/{cfg.max_retries + 1} failed: {e}. "
+                    f"Retrying in {delay:.1f}s..."
+                )
+                await asyncio.sleep(delay)
+                delay *= cfg.retry_backoff
+
+    raise EmbeddingError(
+        ERROR_EMBEDDING_FAILED,
+        f"Embedding failed after {cfg.max_retries + 1} attempts: {last_error}",
+    ) from last_error
 
 
 def embed_text_sync(
@@ -85,7 +138,7 @@ def embed_text_sync(
     config: Optional[EmbeddingConfig] = None,
 ) -> list[float]:
     """
-    Synchronous version of embed_text (IPC-002).
+    Synchronous version of embed_text (IPC-002) with retry logic.
 
     Args:
         text: Text to embed (must not be empty)
@@ -95,21 +148,44 @@ def embed_text_sync(
         1536-dim float32 vector
 
     Raises:
-        EmbeddingError: With code -32040 if text empty, -32041 if API fails
+        EmbeddingError: With code -32040 if text empty, -32041 if API fails after retries
     """
     if not text or not text.strip():
         raise EmbeddingError(ERROR_EMPTY_TEXT, "Empty text")
 
     cfg = config or EmbeddingConfig.from_env()
 
-    try:
-        response = litellm.embedding(
-            model=cfg.model,
-            input=text,
-        )
-        return response.data[0]["embedding"]
-    except Exception as e:
-        raise EmbeddingError(ERROR_EMBEDDING_FAILED, f"Embedding error: {e}") from e
+    last_error: Optional[Exception] = None
+    delay = cfg.retry_delay
+
+    for attempt in range(cfg.max_retries + 1):
+        try:
+            response = litellm.embedding(
+                model=cfg.model,
+                input=text,
+            )
+            return response.data[0]["embedding"]
+        except Exception as e:
+            last_error = e
+
+            # Don't retry on non-retryable errors
+            if not _is_retryable_error(e):
+                logger.warning(f"Embedding failed (non-retryable): {e}")
+                break
+
+            # Don't wait after the last attempt
+            if attempt < cfg.max_retries:
+                logger.warning(
+                    f"Embedding attempt {attempt + 1}/{cfg.max_retries + 1} failed: {e}. "
+                    f"Retrying in {delay:.1f}s..."
+                )
+                time.sleep(delay)
+                delay *= cfg.retry_backoff
+
+    raise EmbeddingError(
+        ERROR_EMBEDDING_FAILED,
+        f"Embedding failed after {cfg.max_retries + 1} attempts: {last_error}",
+    ) from last_error
 
 
 def embedding_to_bytes(embedding: list[float]) -> bytes:
