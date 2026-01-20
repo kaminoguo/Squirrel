@@ -148,17 +148,17 @@ Knowledge specific to THIS project, organized by category:
   "user_styles": [
     {
       "op": "ADD | UPDATE | DELETE",
-      "text": "style description",
-      "target_text": "for UPDATE/DELETE: text of existing style to modify"
+      "text": "style description (for ADD/UPDATE)",
+      "target_id": "for UPDATE/DELETE: id of existing style"
     }
   ],
   "project_memories": [
     {
       "op": "ADD | UPDATE | DELETE",
-      "category": "frontend | backend | docs_test | other",
-      "subcategory": "main",
-      "text": "memory content",
-      "target_text": "for UPDATE/DELETE: text of existing memory to modify"
+      "category": "frontend | backend | docs_test | other (for ADD only)",
+      "subcategory": "main (for ADD only)",
+      "text": "memory content (for ADD/UPDATE)",
+      "target_id": "for UPDATE/DELETE: id of existing memory"
     }
   ]
 }
@@ -251,7 +251,7 @@ User said "we're using PostgreSQL 16 now, not 15".
 ```
 
 Existing user styles: []
-Existing project memories: [{"category": "backend", "text": "PostgreSQL 15 for database"}]
+Existing project memories: [{"id": "mem-5", "category": "backend", "text": "PostgreSQL 15 for database"}]
 
 Output:
 ```json
@@ -260,10 +260,8 @@ Output:
   "project_memories": [
     {
       "op": "UPDATE",
-      "category": "backend",
-      "subcategory": "main",
-      "text": "PostgreSQL 16 for database",
-      "target_text": "PostgreSQL 15 for database"
+      "target_id": "mem-5",
+      "text": "PostgreSQL 16 for database"
     }
   ]
 }

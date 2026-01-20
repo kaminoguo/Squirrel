@@ -74,11 +74,18 @@ Daemon → Memory Service. Process episode events, extract memories.
       }
     ],
     "existing_user_styles": [
-      "Prefer async/await over callbacks",
-      "Never use emoji"
+      {
+        "id": "style-1",
+        "text": "Prefer async/await over callbacks"
+      },
+      {
+        "id": "style-2",
+        "text": "Never use emoji"
+      }
     ],
     "existing_project_memories": [
       {
+        "id": "mem-1",
         "category": "backend",
         "subcategory": "main",
         "text": "Use httpx as HTTP client"
@@ -111,7 +118,7 @@ Daemon → Memory Service. Process episode events, extract memories.
       },
       {
         "op": "UPDATE",
-        "target_text": "Use httpx as HTTP client",
+        "target_id": "mem-1",
         "new_text": "Use httpx as HTTP client. requests causes SSL errors."
       }
     ]
