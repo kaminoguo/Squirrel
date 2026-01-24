@@ -47,7 +47,10 @@ Do NOT extract:
 - One-off tasks ("make a video about X")
 - Temporary debugging steps
 - Universal best practices everyone knows
-- Things that only apply to this exact moment"""
+- Things that only apply to this exact moment
+- Creative/content specifications (video scripts, character designs, marketing copy)
+- Project statistics or data points for specific contexts
+- Tasks unrelated to the core project (see PROJECT CONTEXT below)"""
 
 
 class MemoryExtractor:
@@ -61,7 +64,7 @@ class MemoryExtractor:
             base_url="https://openrouter.ai/api/v1",
             api_key=os.getenv("OPENROUTER_API_KEY"),
         )
-        self.model = os.getenv("SQRL_STRONG_MODEL", "google/gemini-2.0-flash-001")
+        self.model = os.getenv("SQRL_STRONG_MODEL", "google/gemini-3-pro-preview")
 
     async def extract(
         self,
@@ -71,6 +74,7 @@ class MemoryExtractor:
         ai_context: str,
         existing_user_styles: list[ExistingUserStyle],
         existing_project_memories: list[ExistingProjectMemory],
+        project_summary: str | None = None,
         apply_confidence_filter: bool = True,
     ) -> ExtractorOutput:
         """Extract memories from user message with AI context.
@@ -82,6 +86,7 @@ class MemoryExtractor:
             ai_context: The 3 AI turns before the trigger message.
             existing_user_styles: Current user style items.
             existing_project_memories: Current project memories.
+            project_summary: Short summary of what the project does.
             apply_confidence_filter: If True, filter out low-confidence memories.
 
         Returns:
@@ -97,7 +102,16 @@ class MemoryExtractor:
             ],
         )
 
-        user_prompt = f"""PROJECT: {project_id}
+        # Build project context section
+        if project_summary:
+            project_context = f"""PROJECT CONTEXT:
+{project_summary}
+
+Only extract memories relevant to this project. Skip unrelated side tasks."""
+        else:
+            project_context = f"PROJECT: {project_id}"
+
+        user_prompt = f"""{project_context}
 
 EXISTING USER STYLES: {styles_json}
 EXISTING PROJECT MEMORIES: {memories_json}

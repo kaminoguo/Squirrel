@@ -5,9 +5,10 @@ from typing import Any
 
 import structlog
 
-from sqrl.agents import MemoryExtractor, UserScanner
+from sqrl.agents import MemoryExtractor, ProjectSummarizer, UserScanner
 from sqrl.models import ProcessEpisodeRequest, ProcessEpisodeResponse
 from sqrl.models.episode import EpisodeEvent
+from sqrl.models.extraction import ProjectMemoryOp, UserStyleOp
 
 log = structlog.get_logger()
 
@@ -43,13 +44,17 @@ def _get_ai_turns(events: list[EpisodeEvent], trigger_index: int) -> str:
     ai_turn_events = events[start_event_idx:trigger_event_idx]
 
     # Format as text
-    return "\n".join(
-        f"[{e.role}] {e.content_summary}" for e in ai_turn_events
-    )
+    return "\n".join(f"[{e.role}] {e.content_summary}" for e in ai_turn_events)
 
 
 async def handle_process_episode(params: dict[str, Any]) -> dict[str, Any]:
-    """IPC-001: process_episode handler."""
+    """IPC-001: process_episode handler.
+
+    Session-end processing:
+    1. Stage 1 (Flash): Scan all user messages, identify behavioral patterns
+    2. Stage 2 (Pro): Extract memories from each flagged message
+    3. Filter by confidence threshold (>0.8)
+    """
     # Parse request
     try:
         request = ProcessEpisodeRequest(**params)
@@ -62,7 +67,7 @@ async def handle_process_episode(params: dict[str, Any]) -> dict[str, Any]:
         events_count=len(request.events),
     )
 
-    # Stage 1: User Scanner - only scan user messages
+    # Stage 1: User Scanner - scan all user messages for behavioral patterns
     user_messages = _extract_user_messages(request.events)
     if not user_messages:
         log.info("no_user_messages")
@@ -74,38 +79,58 @@ async def handle_process_episode(params: dict[str, Any]) -> dict[str, Any]:
     scanner = UserScanner()
     scanner_output = await scanner.scan(user_messages)
 
-    if not scanner_output.needs_context:
-        log.info("no_correction_detected")
+    if not scanner_output.has_patterns:
+        log.info("no_patterns_detected")
         return ProcessEpisodeResponse(
             skipped=True,
-            skip_reason="No correction or preference detected",
+            skip_reason="No behavioral patterns detected",
         ).model_dump()
 
-    # Stage 2: Memory Extractor - with AI context
-    trigger_index = scanner_output.trigger_index or 0
-    trigger_message = user_messages[trigger_index]
-    ai_context = _get_ai_turns(request.events, trigger_index)
+    log.info("patterns_detected", indices=scanner_output.indices)
+
+    # Stage 0: Get project summary for context
+    summarizer = ProjectSummarizer()
+    project_summary = await summarizer.summarize(request.project_root)
+    if project_summary:
+        log.info("project_summary_generated", length=len(project_summary))
+
+    # Stage 2: Memory Extractor - process each flagged message
+    all_user_styles: list[UserStyleOp] = []
+    all_project_memories: list[ProjectMemoryOp] = []
 
     extractor = MemoryExtractor()
-    extractor_output = await extractor.extract(
-        project_id=request.project_id,
-        project_root=request.project_root,
-        trigger_message=trigger_message,
-        ai_context=ai_context,
-        existing_user_styles=request.existing_user_styles,
-        existing_project_memories=request.existing_project_memories,
-    )
+
+    for trigger_index in scanner_output.indices:
+        if trigger_index >= len(user_messages):
+            continue
+
+        trigger_message = user_messages[trigger_index]
+        ai_context = _get_ai_turns(request.events, trigger_index)
+
+        extractor_output = await extractor.extract(
+            project_id=request.project_id,
+            project_root=request.project_root,
+            trigger_message=trigger_message,
+            ai_context=ai_context,
+            existing_user_styles=request.existing_user_styles,
+            existing_project_memories=request.existing_project_memories,
+            project_summary=project_summary,
+            apply_confidence_filter=True,  # Filter by confidence > 0.8
+        )
+
+        all_user_styles.extend(extractor_output.user_styles)
+        all_project_memories.extend(extractor_output.project_memories)
 
     log.info(
         "process_episode_done",
-        user_styles_count=len(extractor_output.user_styles),
-        project_memories_count=len(extractor_output.project_memories),
+        user_styles_count=len(all_user_styles),
+        project_memories_count=len(all_project_memories),
     )
 
     return ProcessEpisodeResponse(
         skipped=False,
-        user_styles=extractor_output.user_styles,
-        project_memories=extractor_output.project_memories,
+        user_styles=all_user_styles,
+        project_memories=all_project_memories,
     ).model_dump()
 
 

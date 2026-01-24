@@ -62,3 +62,4 @@ devenv.lock
 # Rust
 target/
 Cargo.lock
+.secrets

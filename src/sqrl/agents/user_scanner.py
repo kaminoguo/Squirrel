@@ -43,7 +43,7 @@ class UserScanner:
             base_url="https://openrouter.ai/api/v1",
             api_key=os.getenv("OPENROUTER_API_KEY"),
         )
-        self.model = os.getenv("SQRL_CHEAP_MODEL", "google/gemini-2.0-flash-001")
+        self.model = os.getenv("SQRL_CHEAP_MODEL", "google/gemini-3-flash-preview")
 
     async def scan(self, user_messages: list[str]) -> ScannerOutput:
         """Scan user messages for behavioral patterns.

@@ -8,6 +8,7 @@ Squirrel uses different models for each stage based on task complexity.
 
 | Stage | Default Model | Rationale |
 |-------|---------------|-----------|
+| Project Summarizer | `google/gemini-3-pro-preview` | Quality summary, cached once per project |
 | User Scanner | `google/gemini-3-flash-preview` | Simple detection, high throughput |
 | Memory Extractor | `google/gemini-3-pro-preview` | Complex reasoning, quality matters |
 
@@ -22,13 +23,16 @@ Squirrel uses different models for each stage based on task complexity.
 ```
 Session ends (idle timeout or explicit flush)
     ↓
+Stage 0 (Pro, cached): Summarize project from README
+    → Returns: short project description for context
+    ↓
 Stage 1 (Flash): Scan user messages only
     "Which messages contain behavioral patterns worth extracting?"
     → Returns: indices of flagged messages
     ↓
-Stage 2 (Pro): Only flagged messages + AI context
+Stage 2 (Pro): Only flagged messages + AI context + project summary
     "What should AI do differently?"
-    → Input: flagged_msg + 3 AI turns before
+    → Input: flagged_msg + 3 AI turns before + project context
     → Output: memories with confidence > 0.8
 ```
 
@@ -149,11 +153,17 @@ Do NOT extract:
 - Temporary debugging steps
 - Universal best practices everyone knows
 - Things that only apply to this exact moment
+- Creative/content specifications (video scripts, character designs, marketing copy)
+- Project statistics or data points for specific contexts
+- Tasks unrelated to the core project (see PROJECT CONTEXT below)
 ```
 
 **User Prompt Template:**
 ```
-PROJECT: {project_id}
+PROJECT CONTEXT:
+{project_summary}
+
+Only extract memories relevant to this project. Skip unrelated side tasks.
 
 EXISTING USER STYLES: {existing_user_styles}
 EXISTING PROJECT MEMORIES: {existing_project_memories}
@@ -169,12 +179,48 @@ What behavioral adjustments should be remembered for future sessions?
 
 ---
 
+## PROMPT-003: Project Summarizer
+
+**Model:** `google/gemini-3-pro-preview` (configurable via `SQRL_STRONG_MODEL`)
+
+**ID:** PROMPT-003-PROJECT-SUMMARIZER
+
+**Purpose:** Generate a short summary of what a project does from its README. Provides context to the Memory Extractor to filter out unrelated tasks.
+
+**Timing:** Called once per project, cached for reuse.
+
+**Core Insight:** With project context, the extractor can distinguish "core project work" from "side tasks" (e.g., marketing videos unrelated to the codebase).
+
+**Input Variables:**
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| readme_content | string | Contents of project README.md (truncated to 4000 chars) |
+
+**System Prompt:**
+```
+Summarize this project in 2-3 sentences. Include:
+- What the project does (its purpose)
+- Main tech stack
+- Key domain concepts
+
+Be concise. Output plain text only, no markdown or formatting.
+```
+
+**User Prompt Template:**
+```
+{readme_content}
+```
+
+---
+
 ## Token Budgets
 
 | Prompt ID | Max Input | Max Output |
 |-----------|-----------|------------|
 | PROMPT-001 (User Scanner) | 4000 | 200 |
 | PROMPT-002 (Memory Extractor) | 8000 | 2000 |
+| PROMPT-003 (Project Summarizer) | 4000 | 1000 |
 
 ---
 
