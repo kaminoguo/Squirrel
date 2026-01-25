@@ -1,6 +1,7 @@
 //! MCP (Model Context Protocol) server for AI tools.
 //!
 //! Implements MCP-001: squirrel_get_memory tool.
+//! Implements MCP-002: squirrel_get_doc_debt tool.
 
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -85,6 +86,20 @@ fn get_tools() -> Value {
                     },
                     "required": ["project_root"]
                 }
+            },
+            {
+                "name": "squirrel_get_doc_debt",
+                "description": "Get documentation debt for a project. Shows commits that changed code without updating expected docs.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_root": {
+                            "type": "string",
+                            "description": "Absolute path to project root"
+                        }
+                    },
+                    "required": ["project_root"]
+                }
             }
         ]
     })
@@ -107,6 +122,66 @@ fn handle_get_memory(params: &Value) -> Result<Value, Error> {
     }
 
     let markdown = storage::format_memories_as_markdown(path)?;
+
+    Ok(json!({
+        "content": [
+            {
+                "type": "text",
+                "text": markdown
+            }
+        ]
+    }))
+}
+
+/// Handle squirrel_get_doc_debt tool call.
+fn handle_get_doc_debt(params: &Value) -> Result<Value, Error> {
+    let project_root = params
+        .get("arguments")
+        .and_then(|a| a.get("project_root"))
+        .and_then(|p| p.as_str())
+        .ok_or_else(|| Error::Ipc("Missing project_root parameter".to_string()))?;
+
+    let path = Path::new(project_root);
+    if !path.exists() {
+        return Err(Error::Ipc(format!(
+            "Project root does not exist: {}",
+            project_root
+        )));
+    }
+
+    let debts = storage::get_unresolved_doc_debt(path)?;
+
+    if debts.is_empty() {
+        return Ok(json!({
+            "content": [
+                {
+                    "type": "text",
+                    "text": "No documentation debt found. All docs are up to date!"
+                }
+            ]
+        }));
+    }
+
+    // Format as markdown
+    let mut markdown = format!(
+        "# Documentation Debt\n\n{} commit(s) have unupdated docs:\n\n",
+        debts.len()
+    );
+
+    for debt in &debts {
+        let short_sha = &debt.commit_sha[..7.min(debt.commit_sha.len())];
+        let msg = debt.commit_message.as_deref().unwrap_or("(no message)");
+        markdown.push_str(&format!("## `{}` {}\n\n", short_sha, msg));
+        markdown.push_str("**Changed code:**\n");
+        for file in &debt.code_files {
+            markdown.push_str(&format!("- {}\n", file));
+        }
+        markdown.push_str("\n**Expected doc updates:**\n");
+        for doc in &debt.expected_docs {
+            markdown.push_str(&format!("- {}\n", doc));
+        }
+        markdown.push_str(&format!("\n*Detection rule: {}*\n\n", debt.detection_rule));
+    }
 
     Ok(json!({
         "content": [
@@ -162,6 +237,10 @@ fn handle_request(request: &JsonRpcRequest) -> JsonRpcResponse {
 
             match tool_name {
                 "squirrel_get_memory" => match handle_get_memory(&request.params) {
+                    Ok(result) => JsonRpcResponse::success(id, result),
+                    Err(e) => JsonRpcResponse::error(id, -32000, e.to_string()),
+                },
+                "squirrel_get_doc_debt" => match handle_get_doc_debt(&request.params) {
                     Ok(result) => JsonRpcResponse::success(id, result),
                     Err(e) => JsonRpcResponse::error(id, -32000, e.to_string()),
                 },
