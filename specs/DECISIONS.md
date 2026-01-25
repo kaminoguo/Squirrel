@@ -367,6 +367,100 @@ Hidden command `sqrl watch-daemon` runs the actual watcher loop. System service 
 
 ---
 
+## ADR-017: Doc Awareness Feature
+
+**Status:** accepted
+**Date:** 2025-01-26
+
+**Context:**
+AI tools often forget to update documentation when code changes. Projects have many docs (specs, README, etc.) that drift from reality. Need a way to:
+1. Make docs discoverable to AI tools
+2. Detect when docs are stale
+3. Remind AI to update docs
+
+**Decision:**
+Add doc awareness to Squirrel:
+
+| Component | Purpose |
+|-----------|---------|
+| Doc Watcher | Watch doc files for changes (create/modify/rename) |
+| Doc Indexer | Store doc tree with LLM summaries |
+| Doc Debt Tracker | Detect when code changes but related docs don't |
+| MCP Tools | Expose doc tree and debt status to AI tools |
+
+Detection rules (priority order):
+1. User config mappings (highest priority, eliminates false positives)
+2. Reference-based (code contains SCHEMA-001 → SCHEMAS.md)
+3. Pattern-based (*.rs → ARCHITECTURE.md)
+
+**Consequences:**
+- (+) AI tools can see project doc structure
+- (+) Doc staleness is tracked and visible
+- (+) Deterministic detection (no LLM for debt detection)
+- (+) User can configure mappings to reduce false positives
+- (-) Adds complexity to daemon
+- (-) Requires LLM calls for doc summarization
+
+---
+
+## ADR-018: Silent Init
+
+**Status:** accepted
+**Date:** 2025-01-26
+
+**Context:**
+Previous design had `sqrl init` ask questions about which tools to use. This adds friction and confusion.
+
+**Decision:**
+Make `sqrl init` completely silent:
+- Creates `.sqrl/` with default config
+- No prompts, no questions
+- User configures tools and patterns in dashboard (`sqrl config`)
+
+**Consequences:**
+- (+) Zero friction init
+- (+) Works for any project (even blank)
+- (+) Configuration is visual and discoverable in dashboard
+- (-) User must open dashboard to configure
+
+---
+
+## ADR-019: Auto Git Hook Installation
+
+**Status:** accepted
+**Date:** 2025-01-26
+
+**Context:**
+Git hooks are needed for doc debt detection, but:
+- Manual hook installation is friction
+- Users forget to install hooks
+- Different git paths (IDEs, wrappers) may not trigger hooks
+
+**Decision:**
+Daemon auto-installs hooks when `.git/` detected:
+
+```
+Daemon running
+    ↓ watches project directory
+.git/ created (user runs git init)
+    ↓ daemon detects
+Auto-install hooks to .git/hooks/
+    ↓
+post-commit: calls sqrl _internal docguard-record
+pre-push: calls sqrl _internal docguard-check (optional block)
+```
+
+Hooks are hidden internal commands, not user-facing.
+
+**Consequences:**
+- (+) Zero friction hook setup
+- (+) Works even if user inits git after sqrl
+- (+) No manual hook management
+- (-) Hooks can still be bypassed (--no-verify)
+- (-) True enforcement requires CI (GitHub required checks)
+
+---
+
 ## Deprecated ADRs
 
 | ADR | Status | Reason |

@@ -1,23 +1,26 @@
 //! Daemon control commands (on/off).
 
-use std::fs;
-use std::path::PathBuf;
-
 use tracing::{info, warn};
 
 use crate::cli::service;
+use crate::config::Config;
 use crate::error::Error;
 
 /// Enable the watcher daemon.
 pub async fn enable() -> Result<(), Error> {
-    let config_path = get_config_path()?;
+    let project_root = std::env::current_dir()?;
+    let config_path = Config::path(&project_root);
 
     if !config_path.exists() {
         println!("Squirrel not initialized. Run 'sqrl init' first.");
         return Ok(());
     }
 
-    update_watcher_config(&config_path, true)?;
+    // Load and update config
+    let mut config = Config::load(&project_root)?;
+    config.set_watcher_enabled(true);
+    config.save(&project_root)?;
+    info!("Watcher enabled in config");
 
     // Start the service
     if !service::is_installed()? {
@@ -45,14 +48,19 @@ pub async fn enable() -> Result<(), Error> {
 
 /// Disable the watcher daemon.
 pub async fn disable() -> Result<(), Error> {
-    let config_path = get_config_path()?;
+    let project_root = std::env::current_dir()?;
+    let config_path = Config::path(&project_root);
 
     if !config_path.exists() {
         println!("Squirrel not initialized. Run 'sqrl init' first.");
         return Ok(());
     }
 
-    update_watcher_config(&config_path, false)?;
+    // Load and update config
+    let mut config = Config::load(&project_root)?;
+    config.set_watcher_enabled(false);
+    config.save(&project_root)?;
+    info!("Watcher disabled in config");
 
     // Stop the service
     if service::is_running()? {
@@ -64,23 +72,6 @@ pub async fn disable() -> Result<(), Error> {
 
     println!("Watcher disabled.");
     println!("Run 'sqrl on' to re-enable.");
-
-    Ok(())
-}
-
-fn get_config_path() -> Result<PathBuf, Error> {
-    let project_root = std::env::current_dir()?;
-    Ok(project_root.join(".sqrl").join("config.json"))
-}
-
-fn update_watcher_config(config_path: &PathBuf, enabled: bool) -> Result<(), Error> {
-    let content = fs::read_to_string(config_path)?;
-    let mut config: serde_json::Value = serde_json::from_str(&content)?;
-
-    config["watcher_enabled"] = serde_json::Value::Bool(enabled);
-
-    fs::write(config_path, serde_json::to_string_pretty(&config)?)?;
-    info!(enabled, "Updated watcher config");
 
     Ok(())
 }

@@ -28,6 +28,12 @@ pub enum Error {
 
     #[error("Home directory not found")]
     HomeDirNotFound,
+
+    #[error("Config not found: {0}")]
+    ConfigNotFound(std::path::PathBuf),
+
+    #[error("Config parse error: {0}")]
+    ConfigParse(String),
 }
 
 /// IPC error codes from INTERFACES.md.

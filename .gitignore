@@ -63,3 +63,4 @@ devenv.lock
 target/
 Cargo.lock
 .secrets
+.sqrl/

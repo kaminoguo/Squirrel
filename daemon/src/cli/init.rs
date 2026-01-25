@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use tracing::{info, warn};
 
 use crate::cli::service;
+use crate::config::Config;
 use crate::error::Error;
 use crate::ipc::IpcClient;
 use crate::watcher;
@@ -37,13 +38,10 @@ pub async fn run(with_history: bool) -> Result<(), Error> {
     // Add .sqrl/ to .gitignore if not already there
     add_to_gitignore(&project_root)?;
 
-    // Enable watcher by default
-    let config_path = sqrl_dir.join("config.json");
-    let config = serde_json::json!({
-        "watcher_enabled": true,
-        "initialized_at": chrono::Utc::now().to_rfc3339(),
-    });
-    fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
+    // Create config with defaults (CONFIG-001)
+    let config = Config::default();
+    config.save(&project_root)?;
+    info!("Created config.yaml");
 
     println!("Squirrel initialized.");
 

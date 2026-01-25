@@ -129,6 +129,63 @@ CREATE INDEX idx_extraction_log_created ON extraction_log(created_at DESC);
 
 ---
 
+## SCHEMA-005: docs_index
+
+Indexed documentation files with LLM-generated summaries.
+
+```sql
+CREATE TABLE docs_index (
+  id            TEXT PRIMARY KEY,           -- UUID
+  path          TEXT NOT NULL UNIQUE,       -- Relative path from project root
+  summary       TEXT NOT NULL,              -- LLM-generated 1-2 sentence summary
+  content_hash  TEXT NOT NULL,              -- SHA-256 of file content
+  last_indexed  TEXT NOT NULL               -- ISO 8601
+);
+
+CREATE INDEX idx_docs_index_path ON docs_index(path);
+```
+
+### Examples
+
+| path | summary |
+|------|---------|
+| specs/ARCHITECTURE.md | System boundaries, Rust daemon vs Python service split, data flow |
+| specs/SCHEMAS.md | SQLite table definitions for memories, styles, projects |
+| .claude/CLAUDE.md | Project rules for Claude Code AI assistant |
+
+---
+
+## SCHEMA-006: doc_debt
+
+Tracked documentation debt per commit.
+
+```sql
+CREATE TABLE doc_debt (
+  id              TEXT PRIMARY KEY,         -- UUID
+  commit_sha      TEXT NOT NULL,            -- Git commit SHA
+  commit_message  TEXT,                     -- First line of commit message
+  code_files      TEXT NOT NULL,            -- JSON array of changed code files
+  expected_docs   TEXT NOT NULL,            -- JSON array of docs that should update
+  detection_rule  TEXT NOT NULL,            -- 'config' | 'reference' | 'pattern'
+  resolved        INTEGER DEFAULT 0,        -- 1 if debt resolved
+  resolved_at     TEXT,                     -- ISO 8601 when resolved
+  created_at      TEXT NOT NULL             -- ISO 8601
+);
+
+CREATE INDEX idx_doc_debt_commit ON doc_debt(commit_sha);
+CREATE INDEX idx_doc_debt_resolved ON doc_debt(resolved);
+```
+
+### Detection Rules
+
+| Rule | Priority | Description |
+|------|----------|-------------|
+| config | 1 | User-defined mapping in .sqrl/config.yaml |
+| reference | 2 | Code contains spec ID (e.g., SCHEMA-001) |
+| pattern | 3 | File pattern match (e.g., *.rs → ARCHITECTURE.md) |
+
+---
+
 ## Team Schema (B2B Cloud)
 
 For team features, additional cloud-side schemas.

@@ -49,9 +49,14 @@ Follow these phases in order. Never skip phases. Never jump to code without a sp
 
 ### Before Every Commit (MANDATORY)
 
-A pre-commit hook (`.githooks/pre-commit`) will show you which files changed.
+Squirrel daemon auto-installs git hooks that track doc debt. After each commit, check `sqrl status` to see if docs need updates.
 
-**Your job:** Review the list and decide which docs need updates.
+**Doc debt detection rules (see ADR-017):**
+1. Config mappings (`.sqrl/config.yaml`)
+2. Reference patterns (e.g., code mentions SCHEMA-001)
+3. File patterns (e.g., `*.rs` → check ARCHITECTURE.md)
+
+**Your job:** When doc debt is detected, update the related docs before pushing.
 
 | Files Changed | Check These Docs |
 |---------------|------------------|
@@ -68,6 +73,7 @@ A pre-commit hook (`.githooks/pre-commit`) will show you which files changed.
 | Spec changed? | Update related code |
 | New key/schema/interface? | Add to registry with ID |
 | Unclear requirement? | Mark `[NEEDS CLARIFICATION]`, ask user |
+| Doc debt reported? | Update docs before pushing |
 
 ## Stop and Discuss
 

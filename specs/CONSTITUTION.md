@@ -50,6 +50,16 @@ We don't design complex schemas for the LLM to fill. We give the model episodes 
 
 Each developer's machine is the source of truth. Cloud features (team sync) are optional B2B add-ons.
 
+### P5: Doc Aware
+
+**Squirrel tracks project documentation, making it discoverable to AI tools.**
+
+AI tools often forget project docs exist or which docs to update. Squirrel:
+- Indexes docs with summaries
+- Exposes doc tree via MCP
+- Tracks doc debt (stale docs)
+- Uses deterministic detection (config > references > patterns)
+
 ---
 
 ## System Constraints

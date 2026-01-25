@@ -11,6 +11,7 @@ Squirrel uses different models for each stage based on task complexity.
 | Project Summarizer | `google/gemini-3-pro-preview` | Quality summary, cached once per project |
 | User Scanner | `google/gemini-3-flash-preview` | Simple detection, high throughput |
 | Memory Extractor | `google/gemini-3-pro-preview` | Complex reasoning, quality matters |
+| Doc Summarizer | `google/gemini-3-flash-preview` | Short summaries, called per doc |
 
 **Configuration:** Override via `SQRL_CHEAP_MODEL` and `SQRL_STRONG_MODEL` environment variables.
 
@@ -214,6 +215,56 @@ Be concise. Output plain text only, no markdown or formatting.
 
 ---
 
+## PROMPT-004: Doc Summarizer
+
+**Model:** `google/gemini-3-flash-preview` (configurable via `SQRL_CHEAP_MODEL`)
+
+**ID:** PROMPT-004-DOC-SUMMARIZER
+
+**Purpose:** Generate a brief summary of a documentation file for the doc tree display.
+
+**Timing:** Called when a doc file is created, modified, or renamed (detected by file watcher).
+
+**Core Insight:** Short, informative summaries help AI tools understand project structure at a glance.
+
+**Input Variables:**
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| file_path | string | Relative path to the doc file |
+| content | string | Full content of the doc file (truncated to 8000 chars) |
+
+**System Prompt:**
+```
+Summarize this documentation file in 1-2 sentences.
+
+Focus on:
+- What the document describes or defines
+- Key topics covered
+- Purpose within the project
+
+Be concise and specific. Output plain text only, no markdown.
+Do not start with "This document" or similar phrases.
+```
+
+**User Prompt Template:**
+```
+File: {file_path}
+
+Content:
+{content}
+```
+
+**Example Outputs:**
+
+| File | Summary |
+|------|---------|
+| specs/ARCHITECTURE.md | System boundaries, Rust daemon vs Python service split, data flow diagrams |
+| specs/SCHEMAS.md | SQLite table definitions for memories, user styles, and doc tracking |
+| .claude/CLAUDE.md | Project rules and AI workflow for Claude Code, spec-driven development guidelines |
+
+---
+
 ## Token Budgets
 
 | Prompt ID | Max Input | Max Output |
@@ -221,6 +272,7 @@ Be concise. Output plain text only, no markdown or formatting.
 | PROMPT-001 (User Scanner) | 4000 | 200 |
 | PROMPT-002 (Memory Extractor) | 8000 | 2000 |
 | PROMPT-003 (Project Summarizer) | 4000 | 1000 |
+| PROMPT-004 (Doc Summarizer) | 8000 | 200 |
 
 ---
 

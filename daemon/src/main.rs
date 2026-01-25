@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 mod cli;
+mod config;
 mod dashboard;
 mod error;
 mod ipc;
