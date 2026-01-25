@@ -38,5 +38,8 @@ thiserror = "1"
 # CLI
 clap = { version = "4", features = ["derive"] }
 
+# SQLite
+rusqlite = { version = "0.31", features = ["bundled"] }
+
 [dev-dependencies]
 tempfile = "3"

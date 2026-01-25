@@ -14,6 +14,9 @@ pub enum Error {
     #[error("File watch error: {0}")]
     Watch(#[from] notify::Error),
 
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+
     #[error("IPC error: {0}")]
     Ipc(String),
 

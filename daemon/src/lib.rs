@@ -5,6 +5,7 @@
 pub mod cli;
 pub mod error;
 pub mod ipc;
+pub mod storage;
 pub mod watcher;
 
 pub use error::Error;
