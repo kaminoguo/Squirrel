@@ -2,6 +2,7 @@
 
 use std::process::Command;
 
+use crate::cli::service;
 use crate::dashboard::DEFAULT_PORT;
 use crate::error::Error;
 
@@ -9,36 +10,17 @@ use crate::error::Error;
 pub fn open() -> Result<(), Error> {
     let url = format!("http://localhost:{}", DEFAULT_PORT);
 
-    // Check if dashboard is already running
-    if !is_dashboard_running() {
-        println!("Starting dashboard server...");
-
-        // Get the path to our own executable
-        let exe = std::env::current_exe()?;
-
-        // Spawn dashboard in background
-        Command::new(&exe)
-            .arg("dashboard")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|e| Error::Ipc(format!("Failed to start dashboard: {}", e)))?;
-
-        // Give it a moment to start
-        std::thread::sleep(std::time::Duration::from_millis(500));
+    // Check if daemon is running (dashboard is part of daemon)
+    if !service::is_running().unwrap_or(false) {
+        println!("Daemon is not running.");
+        println!("Run 'sqrl on' to start the daemon first.");
+        return Ok(());
     }
 
     println!("Opening {}", url);
-
-    // Open browser
     open_browser(&url)?;
 
     Ok(())
-}
-
-/// Check if dashboard is already running.
-fn is_dashboard_running() -> bool {
-    std::net::TcpStream::connect(format!("127.0.0.1:{}", DEFAULT_PORT)).is_ok()
 }
 
 /// Open URL in default browser.

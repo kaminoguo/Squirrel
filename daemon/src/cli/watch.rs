@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
+use crate::dashboard;
 use crate::error::Error;
 use crate::ipc::{IpcClient, ProcessEpisodeRequest};
 use crate::watcher::{
@@ -21,6 +22,13 @@ const POLL_INTERVAL_MS: u64 = 100;
 /// Run the watcher daemon (called by system service).
 pub async fn run_daemon() -> Result<(), Error> {
     info!("Starting Squirrel watcher daemon");
+
+    // Start dashboard server in background
+    tokio::spawn(async {
+        if let Err(e) = dashboard::serve(dashboard::DEFAULT_PORT).await {
+            error!(error = %e, "Dashboard server error");
+        }
+    });
 
     // Initialize components
     let mut file_watcher = FileWatcher::new()?;
