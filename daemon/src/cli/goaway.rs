@@ -5,7 +5,7 @@ use std::io::{self, Write};
 
 use tracing::warn;
 
-use crate::cli::service;
+use crate::cli::{hooks, service};
 use crate::error::Error;
 
 /// Run the goaway command.
@@ -34,6 +34,15 @@ pub async fn run(force: bool) -> Result<(), Error> {
         if !input.trim().eq_ignore_ascii_case("y") {
             println!("Cancelled.");
             return Ok(());
+        }
+    }
+
+    // Uninstall git hooks
+    if hooks::has_git(&project_root) {
+        if let Err(e) = hooks::uninstall_hooks(&project_root) {
+            warn!(error = %e, "Failed to uninstall git hooks");
+        } else {
+            println!("Git hooks removed.");
         }
     }
 

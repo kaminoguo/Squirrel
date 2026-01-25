@@ -92,7 +92,7 @@ All spec changes completed on 2025-01-26.
 | 5 | Add IPC method for doc summarization | Phase 3, 4 | |
 | 6 | Add docs_index storage (SCHEMA-005) | Phase 2 | |
 | 7 | Add MCP tool: squirrel_get_docs_tree | Phase 5, 6 | |
-| 8 | Add git detection + auto hook install | Phase 2 | |
+| 8 | Add git detection + auto hook install | Phase 2 | ✅ |
 | 9 | Add post-commit hook logic (internal command) | Phase 8 | |
 | 10 | Add doc debt tracking (SCHEMA-006) | Phase 9 | |
 | 11 | Add MCP tool: squirrel_get_doc_debt | Phase 10 | |

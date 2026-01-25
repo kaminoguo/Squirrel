@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use tracing::{info, warn};
 
-use crate::cli::service;
+use crate::cli::{hooks, service};
 use crate::config::Config;
 use crate::error::Error;
 use crate::ipc::IpcClient;
@@ -42,6 +42,15 @@ pub async fn run(with_history: bool) -> Result<(), Error> {
     let config = Config::default();
     config.save(&project_root)?;
     info!("Created config.yaml");
+
+    // Install git hooks if git exists and auto_install enabled
+    if config.hooks.auto_install && hooks::has_git(&project_root) {
+        if let Err(e) = hooks::install_hooks(&project_root, config.hooks.pre_push_block) {
+            warn!(error = %e, "Failed to install git hooks");
+        } else {
+            println!("Git hooks installed.");
+        }
+    }
 
     println!("Squirrel initialized.");
 

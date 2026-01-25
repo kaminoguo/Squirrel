@@ -14,17 +14,10 @@ Existing bugs and incomplete features from previous session.
 
 ---
 
-### BUG-002: Pre-commit Hook Not Installed
+### BUG-002: Pre-commit Hook Not Installed - ✅ ADDRESSED
 
-**Location:** `.githooks/pre-commit` exists but `core.hooksPath` = `.git/hooks`
-
-**Problem:** Custom doc sync reminder hook in `.githooks/pre-commit` is never executed. Active hook is pre-commit framework (ruff + rustfmt only).
-
-**Fix:** Either:
-1. Set `core.hooksPath` to `.githooks/`
-2. Or merge doc sync logic into pre-commit framework
-
-**Priority:** Medium (addressed by docguard feature later)
+Now using auto-installed hooks in `.git/hooks/` instead of `.githooks/`.
+Hooks are installed automatically by `sqrl init` when git is detected.
 
 ---
 

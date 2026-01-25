@@ -58,6 +58,24 @@ enum Commands {
     /// Internal: run MCP server (used by AI tools)
     #[command(hide = true)]
     Mcp,
+
+    /// Internal commands (used by git hooks)
+    #[command(hide = true, name = "_internal")]
+    Internal {
+        #[command(subcommand)]
+        cmd: InternalCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum InternalCommands {
+    /// Record doc debt after commit (post-commit hook)
+    #[command(name = "docguard-record")]
+    DocguardRecord,
+
+    /// Check doc debt before push (pre-push hook)
+    #[command(name = "docguard-check")]
+    DocguardCheck,
 }
 
 #[tokio::main]
@@ -104,6 +122,16 @@ async fn main() -> Result<(), Error> {
         Some(Commands::Mcp) => {
             mcp::run()?;
         }
+        Some(Commands::Internal { cmd }) => match cmd {
+            InternalCommands::DocguardRecord => {
+                cli::internal::docguard_record()?;
+            }
+            InternalCommands::DocguardCheck => {
+                if !cli::internal::docguard_check()? {
+                    std::process::exit(1);
+                }
+            }
+        },
     }
 
     Ok(())
