@@ -46,13 +46,18 @@ pub async fn run(force: bool) -> Result<(), Error> {
         }
     }
 
-    // Stop and uninstall the service
+    // Stop and uninstall the services
     if service::is_installed().unwrap_or(false) {
-        println!("Stopping and uninstalling background service...");
+        println!("Stopping and uninstalling background services...");
         if let Err(e) = service::uninstall() {
             warn!(error = %e, "Failed to uninstall service");
             println!("Warning: Could not uninstall background service: {}", e);
         }
+    }
+
+    // Stop Python Memory Service
+    if let Err(e) = service::stop_python_service() {
+        warn!(error = %e, "Failed to stop Python Memory Service");
     }
 
     // Remove the directory

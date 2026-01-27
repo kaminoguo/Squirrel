@@ -655,3 +655,225 @@ mod platform {
 // =============================================================================
 
 pub use platform::*;
+
+// =============================================================================
+// Python Memory Service Management
+// =============================================================================
+
+/// Get PID file path for Python Memory Service.
+fn python_pid_file() -> Result<PathBuf, Error> {
+    let home = dirs::home_dir().ok_or(Error::HomeDirNotFound)?;
+    Ok(home.join(".sqrl/memory_service.pid"))
+}
+
+/// Get log file path for Python Memory Service.
+fn python_log_file() -> Result<PathBuf, Error> {
+    let home = dirs::home_dir().ok_or(Error::HomeDirNotFound)?;
+    Ok(home.join(".sqrl/memory_service.log"))
+}
+
+/// Check if Python Memory Service is running.
+pub fn is_python_service_running() -> Result<bool, Error> {
+    let pid_path = python_pid_file()?;
+
+    if !pid_path.exists() {
+        return Ok(false);
+    }
+
+    let pid_str = fs::read_to_string(&pid_path)?;
+    let pid: u32 = match pid_str.trim().parse() {
+        Ok(p) => p,
+        Err(_) => {
+            let _ = fs::remove_file(&pid_path);
+            return Ok(false);
+        }
+    };
+
+    // Check if process exists (platform-specific)
+    #[cfg(unix)]
+    {
+        // Check if process exists by sending signal 0
+        let result = unsafe { libc::kill(pid as i32, 0) };
+        if result != 0 {
+            let _ = fs::remove_file(&pid_path);
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    #[cfg(windows)]
+    {
+        // On Windows, check if process exists via tasklist
+        let output = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+            .output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !stdout.contains(&pid.to_string()) {
+            let _ = fs::remove_file(&pid_path);
+            return Ok(false);
+        }
+        Ok(true)
+    }
+}
+
+/// Find Python executable with sqrl module.
+fn find_python() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+
+    // Check for devenv venv Python first (has sqrl installed via pip -e .)
+    let venv_python = cwd.join(".devenv/state/venv/bin/python");
+    if venv_python.exists() {
+        return Some(venv_python);
+    }
+
+    // Check for devenv profile Python
+    let devenv_python = cwd.join(".devenv/profile/bin/python");
+    if devenv_python.exists() {
+        return Some(devenv_python);
+    }
+
+    // Check home directory devenv (for global usage)
+    if let Some(home) = dirs::home_dir() {
+        let home_venv = home.join("projects/Squirrel/.devenv/state/venv/bin/python");
+        if home_venv.exists() {
+            return Some(home_venv);
+        }
+        let home_devenv = home.join("projects/Squirrel/.devenv/profile/bin/python");
+        if home_devenv.exists() {
+            return Some(home_devenv);
+        }
+    }
+
+    // Fall back to system Python
+    Some(PathBuf::from("python"))
+}
+
+/// Start Python Memory Service.
+pub fn start_python_service() -> Result<(), Error> {
+    // Check if already running
+    if is_python_service_running()? {
+        info!("Python Memory Service already running");
+        return Ok(());
+    }
+
+    let pid_path = python_pid_file()?;
+    let log_path = python_log_file()?;
+
+    // Ensure directory exists
+    if let Some(parent) = pid_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    // Check for required environment variable
+    if std::env::var("SQRL_STRONG_MODEL").is_err() {
+        warn!("SQRL_STRONG_MODEL not set - Python Memory Service will not start");
+        warn!("Set SQRL_STRONG_MODEL to a LiteLLM model ID (e.g., 'openrouter/anthropic/claude-3.5-sonnet')");
+        return Ok(());
+    }
+
+    // Find Python executable
+    let python = match find_python() {
+        Some(p) => p,
+        None => {
+            warn!("Python not found");
+            return Ok(());
+        }
+    };
+    info!(python = %python.display(), "Using Python");
+
+    // Open log file
+    let log = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+    let log_err = log.try_clone()?;
+
+    // Spawn Python service
+    #[cfg(unix)]
+    let child = {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            Command::new(&python)
+                .args(["-m", "sqrl", "serve"])
+                .stdout(log)
+                .stderr(log_err)
+                .stdin(std::process::Stdio::null())
+                .pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                })
+                .spawn()
+        }
+    };
+
+    #[cfg(windows)]
+    let child = Command::new(&python)
+        .args(["-m", "sqrl", "serve"])
+        .stdout(log)
+        .stderr(log_err)
+        .stdin(std::process::Stdio::null())
+        .spawn();
+
+    match child {
+        Ok(c) => {
+            fs::write(&pid_path, c.id().to_string())?;
+            info!(pid = c.id(), "Started Python Memory Service");
+            Ok(())
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to start Python Memory Service");
+            warn!("Ensure Python is in PATH and sqrl package is installed");
+            Ok(()) // Don't fail - daemon can work without Python service
+        }
+    }
+}
+
+/// Stop Python Memory Service.
+pub fn stop_python_service() -> Result<(), Error> {
+    let pid_path = python_pid_file()?;
+
+    if !pid_path.exists() {
+        return Ok(());
+    }
+
+    let pid_str = fs::read_to_string(&pid_path)?;
+    let pid: i32 = match pid_str.trim().parse() {
+        Ok(p) => p,
+        Err(_) => {
+            let _ = fs::remove_file(&pid_path);
+            return Ok(());
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        // Send SIGTERM
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+        info!(pid = pid, "Sent SIGTERM to Python Memory Service");
+
+        // Wait briefly
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        // Force kill if still running
+        let proc_path = PathBuf::from(format!("/proc/{}", pid));
+        if proc_path.exists() {
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+            warn!(pid = pid, "Force killed Python Memory Service");
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .output();
+        info!(pid = pid, "Stopped Python Memory Service");
+    }
+
+    let _ = fs::remove_file(&pid_path);
+    Ok(())
+}

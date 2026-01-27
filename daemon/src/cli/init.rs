@@ -78,7 +78,7 @@ pub async fn run(with_history: bool) -> Result<(), Error> {
         }
     }
 
-    // Install and start the system service
+    // Install and start the Rust daemon service
     if !service::is_installed()? {
         println!("Installing background service...");
         if let Err(e) = service::install() {
@@ -94,6 +94,12 @@ pub async fn run(with_history: bool) -> Result<(), Error> {
             warn!(error = %e, "Failed to start service");
             println!("Warning: Could not start background service: {}", e);
         }
+    }
+
+    // Start Python Memory Service
+    if let Err(e) = service::start_python_service() {
+        warn!(error = %e, "Failed to start Python Memory Service");
+        // Don't fail - daemon works without Python service
     }
 
     println!();

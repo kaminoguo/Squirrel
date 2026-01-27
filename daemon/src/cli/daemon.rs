@@ -22,7 +22,7 @@ pub async fn enable() -> Result<(), Error> {
     config.save(&project_root)?;
     info!("Watcher enabled in config");
 
-    // Start the service
+    // Start the Rust daemon service
     if !service::is_installed()? {
         println!("Installing background service...");
         if let Err(e) = service::install() {
@@ -38,6 +38,12 @@ pub async fn enable() -> Result<(), Error> {
             println!("Warning: Could not start background service: {}", e);
             return Ok(());
         }
+    }
+
+    // Start the Python Memory Service
+    if let Err(e) = service::start_python_service() {
+        warn!(error = %e, "Failed to start Python Memory Service");
+        // Don't fail - daemon works without Python service
     }
 
     println!("Watcher enabled.");
@@ -62,12 +68,17 @@ pub async fn disable() -> Result<(), Error> {
     config.save(&project_root)?;
     info!("Watcher disabled in config");
 
-    // Stop the service
+    // Stop the Rust daemon service
     if service::is_running()? {
         if let Err(e) = service::stop() {
             warn!(error = %e, "Failed to stop service");
             println!("Warning: Could not stop background service: {}", e);
         }
+    }
+
+    // Stop the Python Memory Service
+    if let Err(e) = service::stop_python_service() {
+        warn!(error = %e, "Failed to stop Python Memory Service");
     }
 
     println!("Watcher disabled.");
