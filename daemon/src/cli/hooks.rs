@@ -123,7 +123,12 @@ pub fn uninstall_hooks(project_root: &Path) -> Result<(), Error> {
             if content.contains("Squirrel") {
                 // Remove our section or the entire file
                 let cleaned = remove_squirrel_section(&content);
-                if cleaned.trim().is_empty() || cleaned.trim() == "#!/bin/sh" {
+                // Check if only shebangs and whitespace remain
+                let meaningful_content = cleaned
+                    .lines()
+                    .filter(|line| !line.trim().is_empty() && !line.starts_with("#!"))
+                    .count();
+                if meaningful_content == 0 {
                     fs::remove_file(&hook_path)?;
                 } else {
                     fs::write(&hook_path, cleaned)?;
@@ -140,7 +145,11 @@ pub fn uninstall_hooks(project_root: &Path) -> Result<(), Error> {
 fn remove_squirrel_section(content: &str) -> String {
     content
         .lines()
-        .filter(|line| !line.contains("Squirrel") && !line.contains("sqrl _internal"))
+        .filter(|line| {
+            !line.contains("Squirrel")
+                && !line.contains("sqrl _internal")
+                && !line.contains("doc debt")
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
